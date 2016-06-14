@@ -27,6 +27,7 @@ _MAPPED_NICS = None
 
 DEFAULT_OVS_BRIDGE_FAIL_MODE = 'standalone'
 
+_HIERADATA_FILE = '/etc/puppet/hieradata/nic_mapping.yaml'
 
 class InvalidConfigException(ValueError):
     pass
@@ -178,11 +179,13 @@ class _BaseOpts(object):
     def __init__(self, name, use_dhcp=False, use_dhcpv6=False, addresses=None,
                  routes=None, mtu=None, primary=False, nic_mapping=None,
                  persist_mapping=False, defroute=True, dhclient_args=None,
-                 dns_servers=None):
+                 dns_servers=None, write_hiera=True):
         addresses = addresses or []
         routes = routes or []
         dns_servers = dns_servers or []
         mapped_nic_names = _mapped_nics(nic_mapping)
+        if write_hiera:
+            utils.write_hiera(_HIERADATA_FILE, mapped_nic_names)
         self.hwaddr = None
         self.hwname = None
         self.renamed = False
@@ -310,7 +313,7 @@ class Vlan(_BaseOpts):
     def __init__(self, device, vlan_id, use_dhcp=False, use_dhcpv6=False,
                  addresses=None, routes=None, mtu=None, primary=False,
                  nic_mapping=None, persist_mapping=False, defroute=True,
-                 dhclient_args=None, dns_servers=None):
+                 dhclient_args=None, dns_servers=None, write_hiera=True):
         addresses = addresses or []
         routes = routes or []
         dns_servers = dns_servers or []
@@ -321,9 +324,17 @@ class Vlan(_BaseOpts):
                                    dns_servers)
         self.vlan_id = int(vlan_id)
 
+<<<<<<< HEAD
         mapped_nic_names = _mapped_nics(nic_mapping)
         if device in mapped_nic_names:
             self.device = mapped_nic_names[device]
+=======
+        numbered_nic_names = _numbered_nics(nic_mapping)
+        if write_hiera:
+            utils.write_hiera(_HIERADATA_FILE, numbered_nic_names)
+        if device in numbered_nic_names:
+            self.device = numbered_nic_names[device]
+>>>>>>> 9440e5b... Adds ability to write hieradata for nic mapping
         else:
             self.device = device
 
