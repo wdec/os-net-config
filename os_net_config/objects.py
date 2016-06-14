@@ -24,7 +24,7 @@ from os_net_config import utils
 logger = logging.getLogger(__name__)
 
 _NUMBERED_NICS = None
-_HIERADATA_FILE = '/etc/puppet/hieradata/common.yaml'
+_HIERADATA_FILE = '/etc/puppet/hieradata/nic_mapping.yaml'
 
 class InvalidConfigException(ValueError):
     pass
