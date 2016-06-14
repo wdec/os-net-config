@@ -27,7 +27,7 @@ _MAPPED_NICS = None
 
 DEFAULT_OVS_BRIDGE_FAIL_MODE = 'standalone'
 
-_HIERADATA_FILE = '/etc/puppet/hieradata/nic_mapping.yaml'
+_HIERADATA_FILE = '/etc/puppet/hieradata/common.yaml'
 
 class InvalidConfigException(ValueError):
     pass
@@ -324,17 +324,11 @@ class Vlan(_BaseOpts):
                                    dns_servers)
         self.vlan_id = int(vlan_id)
 
-<<<<<<< HEAD
         mapped_nic_names = _mapped_nics(nic_mapping)
+        if write_hiera:
+            utils.write_hiera(_HIERADATA_FILE, mapped_nic_names)
         if device in mapped_nic_names:
             self.device = mapped_nic_names[device]
-=======
-        numbered_nic_names = _numbered_nics(nic_mapping)
-        if write_hiera:
-            utils.write_hiera(_HIERADATA_FILE, numbered_nic_names)
-        if device in numbered_nic_names:
-            self.device = numbered_nic_names[device]
->>>>>>> 9440e5b... Adds ability to write hieradata for nic mapping
         else:
             self.device = device
 

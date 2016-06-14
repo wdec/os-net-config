@@ -274,6 +274,6 @@ def write_hiera(filename, data):
     with open(filename, 'a') as stream:
         if not isinstance(data, dict):
             raise TypeError('data type must be dictionary')
-        for key,value in data.iteritems():
-            hiera_str = key + ': ' + value
+        for key, value in data.iteritems():
+            hiera_str = key + ': ' + value + '\n'
             stream.write(hiera_str)
