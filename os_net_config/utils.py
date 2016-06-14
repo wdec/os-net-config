@@ -111,3 +111,20 @@ def diff(filename, data):
     logger.debug("Diff data:\n%s" % data)
     # convert to string as JSON may have unicode in it
     return not file_data == data
+
+
+def write_hiera(filename, data):
+    """
+    Writes a dictionary as hiera variables to a file.  If file already exists,
+    the data will be appended to the file.
+    :param filename:  file to write the hiera data to
+    :param data: dictionary of key,value pairs to write as hiera variables
+    :return: None
+    """
+
+    with open(filename, 'a') as stream:
+        if not isinstance(data, dict):
+            raise TypeError('data type must be dictionary')
+        for key,value in data.iteritems():
+            hiera_str = key + ': ' + value
+            stream.write(hiera_str)

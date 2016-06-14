@@ -24,7 +24,7 @@ from os_net_config import utils
 logger = logging.getLogger(__name__)
 
 _NUMBERED_NICS = None
-
+_HIERADATA_FILE = '/etc/puppet/hieradata/nic_mapping.yaml'
 
 class InvalidConfigException(ValueError):
     pass
@@ -144,11 +144,13 @@ class _BaseOpts(object):
     def __init__(self, name, use_dhcp=False, use_dhcpv6=False, addresses=None,
                  routes=None, mtu=None, primary=False, nic_mapping=None,
                  persist_mapping=False, defroute=True, dhclient_args=None,
-                 dns_servers=None):
+                 dns_servers=None, write_hiera=True):
         addresses = addresses or []
         routes = routes or []
         dns_servers = dns_servers or []
         numbered_nic_names = _numbered_nics(nic_mapping)
+        if write_hiera:
+            utils.write_hiera(_HIERADATA_FILE, numbered_nic_names)
         self.hwaddr = None
         self.hwname = None
         self.renamed = False
@@ -274,7 +276,7 @@ class Vlan(_BaseOpts):
     def __init__(self, device, vlan_id, use_dhcp=False, use_dhcpv6=False,
                  addresses=None, routes=None, mtu=None, primary=False,
                  nic_mapping=None, persist_mapping=False, defroute=True,
-                 dhclient_args=None, dns_servers=None):
+                 dhclient_args=None, dns_servers=None, write_hiera=True):
         addresses = addresses or []
         routes = routes or []
         dns_servers = dns_servers or []
@@ -286,6 +288,8 @@ class Vlan(_BaseOpts):
         self.vlan_id = int(vlan_id)
 
         numbered_nic_names = _numbered_nics(nic_mapping)
+        if write_hiera:
+            utils.write_hiera(_HIERADATA_FILE, numbered_nic_names)
         if device in numbered_nic_names:
             self.device = numbered_nic_names[device]
         else:
