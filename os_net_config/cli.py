@@ -126,6 +126,9 @@ def main(argv=sys.argv):
         logger.info('Using mapping file at: %s' % opts.mapping_file)
     iface_array = []
 
+    if os.path.isdir('/sys/class/net/ovs-netdev'):
+        return 0
+
     provider = None
     if opts.provider:
         if opts.provider == 'ifcfg':
