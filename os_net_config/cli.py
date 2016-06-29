@@ -126,7 +126,7 @@ def main(argv=sys.argv):
         logger.info('Using mapping file at: %s' % opts.mapping_file)
     iface_array = []
 
-    if os.path.isdir('/sys/class/net/ovs-netdev'):
+    if os.path.isfile('/root/dpdk_bind_lock'):
         return 0
 
     provider = None
