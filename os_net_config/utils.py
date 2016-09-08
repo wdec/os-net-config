@@ -50,6 +50,19 @@ def interface_mac(name):
         raise
 
 
+def interface_vpp_str(name):
+    for root, dirnames, filenames in os.walk('/sys/devices/'):
+        for dirname in dirnames:
+            if dirname == name:
+                match = re.search("/\w+:(\w+):(\w+)\.(\w+)/", root)
+                if match:
+                    return "%d/%d/%d" % (int(match.group(1), 16),
+                                         int(match.group(2), 16),
+                                         int(match.group(3), 16))
+    logger.error("Unable to find vpp str for interface %s" % name)
+    return ''
+
+
 def _is_active_nic(interface_name):
     try:
         if interface_name == 'lo':

@@ -151,6 +151,7 @@ class _BaseOpts(object):
         numbered_nic_names = _numbered_nics(nic_mapping)
         if write_hiera:
             utils.write_hiera(_HIERADATA_FILE, numbered_nic_names)
+
         self.hwaddr = None
         self.hwname = None
         self.renamed = False
@@ -162,6 +163,12 @@ class _BaseOpts(object):
                 self.renamed = True
             else:
                 self.name = numbered_nic_names[name]
+            if write_hiera:
+                businfo = utils.interface_vpp_str(numbered_nic_names[name])
+                if businfo:
+                    utils.write_hiera(_HIERADATA_FILE,
+                                      {"%s_vpp_str" % numbered_nic_names[name]:
+                                       "'%s'" % businfo})
         else:
             self.name = name
 
