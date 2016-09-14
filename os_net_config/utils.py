@@ -19,6 +19,7 @@ import logging
 import os
 import re
 
+from oslo_concurrency import processutils
 
 logger = logging.getLogger(__name__)
 _SYS_CLASS_NET = '/sys/class/net'
@@ -51,16 +52,24 @@ def interface_mac(name):
 
 
 def interface_vpp_str(name):
-    for root, dirnames, filenames in os.walk('/sys/devices/'):
-        for dirname in dirnames:
-            if dirname == name:
-                match = re.search("/\w+:(\w+):(\w+)\.(\w+)/", root)
-                if match:
-                    return "%d/%d/%d" % (int(match.group(1), 16),
-                                         int(match.group(2), 16),
-                                         int(match.group(3), 16))
-    logger.error("Unable to find vpp str for interface %s" % name)
-    return ''
+    bus_info = ''
+    out, err = processutils.execute('ethtool', '-i', name)
+    if not err:
+        for item in out.split('\n'):
+            if 'bus-info' in item:
+                bus_info = item.split(' ')[1]
+    else:
+        logger.error("Unable to find bus-info for interface %s" % name)
+        return ''
+
+    match = re.search("\w+:(\w+):(\w+)\.(\w+)", bus_info)
+    if match:
+        return "%x/%x/%x" % (int(match.group(1), 16),
+                             int(match.group(2), 16),
+                             int(match.group(3), 16))
+    else:
+        logger.error("Unable to find vpp str for interface %s" % name)
+        return ''
 
 
 def _is_active_nic(interface_name):
