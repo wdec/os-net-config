@@ -1,0 +1,9 @@
+{ "network_config": [
+    {
+        "type": "vpp_interface",
+        "name": "nic2",
+        "uio_driver": "uio_pci_generic",
+        "options": "vlan-strip-offload off"
+    }
+  ]
+}
