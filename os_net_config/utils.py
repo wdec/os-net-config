@@ -469,11 +469,10 @@ def update_vpp_mapping(vpp_interfaces):
                                % (vpp_int.name, vpp_int.pci_dev))
 
         # Generate content of startup script for VPP
-        for vpp_int in vpp_interfaces:
-            for address in vpp_int.addresses:
-                vpp_start_cli += 'set interface state %s up\n' % vpp_name
-                vpp_start_cli += 'set interface ip address %s %s/%s\n' \
-                                 % (vpp_name, address.ip, address.prefixlen)
+        for address in vpp_int.addresses:
+            vpp_start_cli += 'set interface state %s up\n' % vpp_name
+            vpp_start_cli += 'set interface ip address %s %s/%s\n' \
+                             % (vpp_name, address.ip, address.prefixlen)
 
         logger.info('Updating mapping for vpp interface %s:'
                     'pci_dev: %s mac address: %s uio driver: %s'
