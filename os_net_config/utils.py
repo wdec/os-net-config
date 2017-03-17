@@ -39,6 +39,8 @@ _DPDK_MAPPING_FILE = '/var/lib/os-net-config/dpdk_mapping.yaml'
 # be executed when VPP starts as if typed from CLI.
 _VPP_EXEC_FILE = '/etc/vpp/vpp-exec'
 
+HIERADATA_FILE = '/etc/puppet/hieradata/common.yaml'
+
 
 class OvsDpdkBindException(ValueError):
     pass
@@ -292,12 +294,16 @@ def write_hiera(filename, data):
     :param data: dictionary of key,value pairs to write as hiera variables
     :return: None
     """
-    with open(filename, 'a') as stream:
-        if not isinstance(data, dict):
-            raise TypeError('data type must be dictionary')
-        for key, value in data.iteritems():
-            hiera_str = key + ': ' + value + '\n'
-            stream.write(hiera_str)
+    if not isinstance(data, dict):
+        raise TypeError('data type must be dictionary')
+
+    current_content = get_file_data(filename)
+    current_data = yaml.load(current_content)
+    if current_data:
+        current_data.update(data)
+    else:
+        current_data = data
+    write_yaml_config(HIERADATA_FILE, current_data)
 
 
 def restart_vpp(vpp_interfaces):
@@ -480,6 +486,7 @@ def update_vpp_mapping(vpp_interfaces):
                        vpp_int.uio_driver))
         _update_dpdk_map(vpp_int.name, vpp_int.pci_dev, vpp_int.hwaddr,
                          vpp_int.uio_driver)
+        write_hiera(HIERADATA_FILE, {vpp_int.name: vpp_name})
 
     if diff(_VPP_EXEC_FILE, vpp_start_cli):
         write_config(_VPP_EXEC_FILE, vpp_start_cli)

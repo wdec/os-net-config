@@ -27,8 +27,6 @@ _MAPPED_NICS = None
 
 DEFAULT_OVS_BRIDGE_FAIL_MODE = 'standalone'
 
-_HIERADATA_FILE = '/etc/puppet/hieradata/common.yaml'
-
 
 class InvalidConfigException(ValueError):
     pass
@@ -188,7 +186,7 @@ class _BaseOpts(object):
         dns_servers = dns_servers or []
         mapped_nic_names = _mapped_nics(nic_mapping)
         if write_hiera:
-            utils.write_hiera(_HIERADATA_FILE, mapped_nic_names)
+            utils.write_hiera(utils.HIERADATA_FILE, mapped_nic_names)
         self.hwaddr = None
         self.hwname = None
         self.renamed = False
@@ -329,7 +327,7 @@ class Vlan(_BaseOpts):
 
         mapped_nic_names = _mapped_nics(nic_mapping)
         if write_hiera:
-            utils.write_hiera(_HIERADATA_FILE, mapped_nic_names)
+            utils.write_hiera(utils.HIERADATA_FILE, mapped_nic_names)
         if device in mapped_nic_names:
             self.device = mapped_nic_names[device]
         else:
