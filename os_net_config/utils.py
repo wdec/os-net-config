@@ -332,7 +332,7 @@ def _get_vpp_interface_name(pci_addr):
 
     try:
         processutils.execute('systemctl', 'is-active', 'vpp')
-        out, err = processutils.execute('vppctl', 'show', 'int')
+        out, err = processutils.execute('vppctl', 'show', 'interfaces')
         m = re.search(r':([0-9a-fA-F]{2}):([0-9a-fA-F]{2}).([0-9a-fA-F])',
                       pci_addr)
         if m:
@@ -375,11 +375,7 @@ def generate_vpp_config(vpp_config_path, vpp_interfaces):
     :return: updated VPP config content.
     """
 
-    data = ""
-
-    # Read in existing config
-    with open(vpp_config_path, 'r') as f:
-        data = f.read()
+    data = get_file_data(vpp_config_path)
 
     # Add interface config to dpdk section
     for vpp_interface in vpp_interfaces:
@@ -487,6 +483,10 @@ def update_vpp_mapping(vpp_interfaces):
         _update_dpdk_map(vpp_int.name, vpp_int.pci_dev, vpp_int.hwaddr,
                          vpp_int.uio_driver)
         write_hiera(HIERADATA_FILE, {vpp_int.name: vpp_name})
+
+        # Enable VPP service to make the VPP interface configuration
+        # persistent.
+        processutils.execute('systemctl', 'enable', 'vpp')
 
     if diff(_VPP_EXEC_FILE, vpp_start_cli):
         write_config(_VPP_EXEC_FILE, vpp_start_cli)
