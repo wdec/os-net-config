@@ -332,7 +332,7 @@ def _get_vpp_interface_name(pci_addr):
 
     try:
         processutils.execute('systemctl', 'is-active', 'vpp')
-        out, err = processutils.execute('vppctl', 'show', 'interfaces')
+        out, err = processutils.execute('vppctl', 'show', 'interface')
         m = re.search(r':([0-9a-fA-F]{2}):([0-9a-fA-F]{2}).([0-9a-fA-F])',
                       pci_addr)
         if m:
@@ -410,10 +410,11 @@ def generate_vpp_config(vpp_config_path, vpp_interfaces):
                     data = re.sub(m.group(0), r'  uio-driver %s'
                                   % vpp_interface.uio_driver, data)
                 else:
-                    data = re.sub(r'(dpdk\s*\{)',
+                    data = re.sub(r'(^\s*dpdk\s*\{)',
                                   r'\1\n  uio-driver %s'
                                   % vpp_interface.uio_driver,
-                                  data)
+                                  data,
+                                  flags=re.MULTILINE)
         else:
             logger.debug('pci address not found for interface %s, may have'
                          'already been bound to vpp' % vpp_interface.name)
