@@ -54,6 +54,10 @@ def nfvswitch_config_path():
     return "/etc/sysconfig/nfvswitch"
 
 
+def vpp_config_path():
+    return "/etc/vpp/startup.conf"
+
+
 def route_config_path(name):
     return "/etc/sysconfig/network-scripts/route-%s" % name
 
@@ -116,6 +120,8 @@ class IfcfgNetConfig(os_net_config.NetConfig):
         self.linuxbond_data = {}
         self.ib_interface_data = {}
         self.linuxteam_data = {}
+        self.vpp_interface_data = {}
+        self.vpp_bond_data = {}
         self.member_names = {}
         self.renamed_interfaces = {}
         self.bond_primary_ifaces = {}
@@ -621,6 +627,32 @@ class IfcfgNetConfig(os_net_config.NetConfig):
         if ovs_dpdk_bond.routes:
             self._add_routes(ovs_dpdk_bond.name, ovs_dpdk_bond.routes)
 
+    def add_vpp_interface(self, vpp_interface):
+        """Add a VppInterface object to the net config object
+
+        :param vpp_interface: The VppInterface object to add
+        """
+        vpp_interface.pci_dev = utils.get_pci_address(vpp_interface.name,
+                                                      False)
+        if not vpp_interface.pci_dev:
+            vpp_interface.pci_dev = utils.get_stored_pci_address(
+                vpp_interface.name, False)
+        vpp_interface.hwaddr = utils.interface_mac(vpp_interface.name)
+        if not self.noop:
+            self.ifdown(vpp_interface.name)
+            remove_ifcfg_config(vpp_interface.name)
+        logger.info('adding vpp interface: %s %s'
+                    % (vpp_interface.name, vpp_interface.pci_dev))
+        self.vpp_interface_data[vpp_interface.name] = vpp_interface
+
+    def add_vpp_bond(self, vpp_bond):
+        """Add a VppInterface object to the net config object
+
+        :param vpp_bond: The VPPBond object to add
+        """
+        logger.info('adding vpp bond: %s' % vpp_bond.name)
+        self.vpp_bond_data[vpp_bond.name] = vpp_bond
+
     def generate_ivs_config(self, ivs_uplinks, ivs_interfaces):
         """Generate configuration content for ivs."""
 
@@ -685,6 +717,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
         restart_bridges = []
         restart_linux_bonds = []
         restart_linux_teams = []
+        restart_vpp = False
         update_files = {}
         all_file_names = []
         ivs_uplinks = []  # ivs physical uplinks
@@ -693,6 +726,8 @@ class IfcfgNetConfig(os_net_config.NetConfig):
         nfvswitch_internal_ifaces = []  # nfvswitch internal/management ports
         stop_dhclient_interfaces = []
         ovs_needs_restart = False
+        vpp_interfaces = self.vpp_interface_data.values()
+        vpp_bonds = self.vpp_bond_data.values()
 
         for interface_name, iface_data in self.interface_data.iteritems():
             route_data = self.route_data.get(interface_name, '')
@@ -901,6 +936,16 @@ class IfcfgNetConfig(os_net_config.NetConfig):
                 logger.info('No changes required for InfiniBand iface: %s' %
                             interface_name)
 
+        if self.vpp_interface_data or self.vpp_bond_data:
+            vpp_path = self.root_dir + vpp_config_path()
+            vpp_config = utils.generate_vpp_config(vpp_path, vpp_interfaces,
+                                                   vpp_bonds)
+            if utils.diff(vpp_path, vpp_config):
+                restart_vpp = True
+                update_files[vpp_path] = vpp_config
+            else:
+                logger.info('No changes required for VPP')
+
         if cleanup:
             for ifcfg_file in glob.iglob(cleanup_pattern()):
                 if ifcfg_file not in all_file_names:
@@ -927,7 +972,10 @@ class IfcfgNetConfig(os_net_config.NetConfig):
             for bridge in restart_bridges:
                 self.ifdown(bridge, iftype='bridge')
 
-            for oldname, newname in self.renamed_interfaces.iteritems():
+            for vpp_interface in vpp_interfaces:
+                self.ifdown(vpp_interface.name)
+
+            for oldname, newname in self.renamed_interfaces.items():
                 self.ifrename(oldname, newname)
 
         # DPDK initialization is done before running os-net-config, to make
@@ -1006,5 +1054,14 @@ class IfcfgNetConfig(os_net_config.NetConfig):
 
             for vlan in restart_vlans:
                 self.ifup(vlan)
+
+            if not self.noop:
+                if restart_vpp:
+                    logger.info('Restarting VPP')
+                    utils.restart_vpp(vpp_interfaces)
+
+                if self.vpp_interface_data:
+                    logger.info('Updating VPP mapping')
+                    utils.update_vpp_mapping(vpp_interfaces, vpp_bonds)
 
         return update_files

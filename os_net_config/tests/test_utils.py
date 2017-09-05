@@ -21,6 +21,7 @@ import shutil
 import tempfile
 import yaml
 
+from os_net_config import objects
 from os_net_config.tests import base
 from os_net_config import utils
 
@@ -36,6 +37,40 @@ supports-test: yes
 supports-eeprom-access: yes
 supports-register-dump: yes
 supports-priv-flags: no
+'''
+
+_VPPCTL_OUTPUT = '''
+            Name               Idx       State          Counter          Count
+GigabitEthernet0/9/0              1        down
+local0                            0        down
+
+'''
+
+_VPPBOND_OUTPUT = """
+              Name                Idx   Link  Hardware
+BondEthernet0                      3     up   Slave-Idx: 1 2
+TenGigabitEthernet2/0/0            1    slave TenGigabitEthernet2/0/0
+TenGigabitEthernet2/0/1            2    slave TenGigabitEthernet2/0/1
+"""
+
+_INITIAL_VPP_CONFIG = '''
+unix {
+  nodaemon
+  log /tmp/vpp.log
+  full-coredump
+}
+
+
+api-trace {
+  on
+}
+
+api-segment {
+  gid vpp
+}
+
+dpdk {
+}
 '''
 
 
@@ -83,7 +118,7 @@ class TestUtils(base.TestCase):
                 out = _PCI_OUTPUT
                 return out, None
         self.stubs.Set(processutils, 'execute', test_execute)
-        pci = utils._get_pci_address('nic2', False)
+        pci = utils.get_pci_address('nic2', False)
         self.assertEqual('0000:00:19.0', pci)
 
     def test_get_pci_address_exception(self):
@@ -91,7 +126,7 @@ class TestUtils(base.TestCase):
             if 'ethtool' in name:
                 raise processutils.ProcessExecutionError
         self.stubs.Set(processutils, 'execute', test_execute)
-        pci = utils._get_pci_address('nic2', False)
+        pci = utils.get_pci_address('nic2', False)
         self.assertEqual(None, pci)
 
     def test_get_pci_address_error(self):
@@ -99,7 +134,7 @@ class TestUtils(base.TestCase):
             if 'ethtool' in name:
                 return None, 'Error'
         self.stubs.Set(processutils, 'execute', test_execute)
-        pci = utils._get_pci_address('nic2', False)
+        pci = utils.get_pci_address('nic2', False)
         self.assertEqual(None, pci)
 
     def test_bind_dpdk_interfaces(self):
@@ -241,3 +276,155 @@ class TestUtils(base.TestCase):
         self.assertEqual(utils._is_active_nic('enp129s2'), False)
 
         shutil.rmtree(tmpdir)
+
+    def test_get_vpp_interface(self):
+        def test_execute(name, dummy1, dummy2=None, dummy3=None):
+            if 'systemctl' in name:
+                return None, None
+            if 'vppctl' in name:
+                return _VPPCTL_OUTPUT, None
+
+        self.stubs.Set(processutils, 'execute', test_execute)
+
+        int_info = utils._get_vpp_interface('0000:00:09.0')
+        self.assertIsNotNone(int_info)
+        self.assertEqual('GigabitEthernet0/9/0', int_info['name'])
+        self.assertEqual('1', int_info['index'])
+        self.assertIsNone(utils._get_vpp_interface(None))
+        self.assertIsNone(utils._get_vpp_interface('0000:01:09.0'))
+        self.assertRaises(utils.VppException,
+                          utils._get_vpp_interface, '0000:09.0')
+
+    def test_get_vpp_bond(self):
+        def test_execute(name, dummy1, dummy2=None, dummy3=None,
+                         dummy4=None):
+            if 'systemctl' in name:
+                return None, None
+            if 'vppctl' in name:
+                return _VPPBOND_OUTPUT, None
+
+        self.stubs.Set(processutils, 'execute', test_execute)
+        bond_info = utils._get_vpp_bond(['1', '2'])
+        self.assertIsNotNone(bond_info)
+        self.assertEqual('BondEthernet0', bond_info['name'])
+        self.assertEqual('3', bond_info['index'])
+        self.assertIsNone(utils._get_vpp_bond(['1']))
+        self.assertIsNone(utils._get_vpp_bond(['1', '2', '3']))
+        self.assertIsNone(utils._get_vpp_bond([]))
+
+    def test_generate_vpp_config(self):
+        tmpdir = tempfile.mkdtemp()
+        config_path = os.path.join(tmpdir, 'startup.conf')
+        with open(config_path, 'w') as f:
+            f.write(_INITIAL_VPP_CONFIG)
+        vpp_exec_path = os.path.join(tmpdir, 'vpp-exec')
+        utils._VPP_EXEC_FILE = vpp_exec_path
+
+        int1 = objects.VppInterface('em1', options="vlan-strip-offload off")
+        int1.pci_dev = '0000:00:09.0'
+        int2 = objects.VppInterface('em2')
+        int2.pci_dev = '0000:00:09.1'
+        interfaces = [int1, int2]
+        bonds = []
+        expected_config = '''
+unix {
+  exec %s
+  nodaemon
+  log /tmp/vpp.log
+  full-coredump
+}
+
+
+api-trace {
+  on
+}
+
+api-segment {
+  gid vpp
+}
+
+dpdk {
+  dev 0000:00:09.1
+  uio-driver vfio-pci
+  dev 0000:00:09.0 {vlan-strip-offload off}
+
+}
+''' % vpp_exec_path
+        self.assertEqual(expected_config,
+                         utils.generate_vpp_config(config_path, interfaces,
+                                                   bonds))
+
+        bonds = [objects.VppBond('net_bonding0', members=interfaces,
+                                 bonding_options='mode=2')]
+        expected_config = '''
+unix {
+  exec %s
+  nodaemon
+  log /tmp/vpp.log
+  full-coredump
+}
+
+
+api-trace {
+  on
+}
+
+api-segment {
+  gid vpp
+}
+
+dpdk {
+  vdev net_bonding0,slave=0000:00:09.0,slave=0000:00:09.1,mode=2
+  dev 0000:00:09.1
+  uio-driver vfio-pci
+  dev 0000:00:09.0 {vlan-strip-offload off}
+
+}
+''' % vpp_exec_path
+        self.assertEqual(expected_config,
+                         utils.generate_vpp_config(config_path, interfaces,
+                                                   bonds))
+
+    def test_update_vpp_mapping(self):
+        tmpdir = tempfile.mkdtemp()
+        vpp_exec_path = os.path.join(tmpdir, 'vpp-exec')
+        utils._VPP_EXEC_FILE = vpp_exec_path
+
+        def test_get_dpdk_map():
+            return [{'name': 'eth1', 'pci_address': '0000:00:09.0',
+                     'mac_address': '01:02:03:04:05:06',
+                     'driver': 'vfio-pci'}]
+
+        self.stubs.Set(utils, '_get_dpdk_map', test_get_dpdk_map)
+
+        def test_execute(name, dummy1, dummy2=None, dummy3=None):
+            return None, None
+        self.stubs.Set(processutils, 'execute', test_execute)
+
+        def test_get_vpp_interface_name(pci_dev):
+            return {'name': 'GigabitEthernet0/9/0', 'index': '1'}
+
+        self.stubs.Set(utils, '_get_vpp_interface',
+                       test_get_vpp_interface_name)
+
+        int1 = objects.VppInterface('eth1', options="vlan-strip-offload off")
+        int1.pci_dev = '0000:00:09.0'
+        int1.hwaddr = '01:02:03:04:05:06'
+        int2 = objects.VppInterface('eth2')
+        int2.pci_dev = '0000:00:09.1'
+        int2.hwaddr = '01:02:03:04:05:07'
+        interfaces = [int1, int2]
+
+        utils.update_vpp_mapping(interfaces, [])
+
+        contents = utils.get_file_data(utils._DPDK_MAPPING_FILE)
+
+        dpdk_test = [{'name': 'eth1', 'pci_address': '0000:00:09.0',
+                      'mac_address': '01:02:03:04:05:06',
+                      'driver': 'vfio-pci'},
+                     {'name': 'eth2', 'pci_address': '0000:00:09.1',
+                      'mac_address': '01:02:03:04:05:07',
+                      'driver': 'vfio-pci'}]
+        dpdk_map = yaml.load(contents) if contents else []
+        self.assertEqual(2, len(dpdk_map))
+        self.assertListEqual(dpdk_test, dpdk_map)

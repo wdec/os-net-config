@@ -68,6 +68,10 @@ def object_from_json(json):
         return OvsDpdkPort.from_json(json)
     elif obj_type == "ovs_dpdk_bond":
         return OvsDpdkBond.from_json(json)
+    elif obj_type == "vpp_interface":
+        return VppInterface.from_json(json)
+    elif obj_type == "vpp_bond":
+        return VppBond.from_json(json)
 
 
 def _get_required_field(json, name, object_name):
@@ -1105,3 +1109,112 @@ class OvsDpdkBond(_BaseOpts):
                            defroute=defroute, dhclient_args=dhclient_args,
                            dns_servers=dns_servers,
                            nm_controlled=nm_controlled)
+
+
+class VppInterface(_BaseOpts):
+    """Base class for VPP Interface.
+
+    Vector Packet Processing (VPP) is a high performance packet processing
+    stack that runs in user space in Linux. VPP is used as an alternative to
+    kernel networking stack for accelerated network data path. VPP uses DPDK
+    poll-mode drivers to bind system interfaces rather than kernel drivers.
+    VPP bound interfaces are not visible to kernel networking stack, so we
+    must handle them separately.
+
+    The following parameters can be specified in addition to base Interface:
+      - uio_driver: DPDK poll-mode driver name. Defaults to 'vfio-pci', valid
+                    values are 'uio_pci_generic' and 'vfio-pci'.
+      - options: Interface options such as vlan stripping and tx/rx transmit
+                 queues specification. Defaults to None. Reference for those
+                 configurations can be found at
+                 https://wiki.fd.io/view/VPP/Command-line_Arguments
+                 Example: 'vlan-strip-offload on num-rx-queues 3'
+
+    Note that 'name' attribute is used to indicate the kernel nic that should
+    be bound to VPP. Once VPP binds the interface, a mapping file will be
+    updated with the interface's information, and this file will be used in
+    subsequent runs of os-net-config.
+    """
+    def __init__(self, name, use_dhcp=False, use_dhcpv6=False, addresses=None,
+                 routes=None, mtu=None, primary=False, nic_mapping=None,
+                 persist_mapping=False, defroute=True, dhclient_args=None,
+                 dns_servers=None, nm_controlled=False, uio_driver='vfio-pci',
+                 options=None):
+        addresses = addresses or []
+
+        super(VppInterface, self).__init__(name, use_dhcp, use_dhcpv6,
+                                           addresses, routes, mtu, primary,
+                                           nic_mapping, persist_mapping,
+                                           defroute, dhclient_args,
+                                           dns_servers, nm_controlled)
+        self.uio_driver = uio_driver
+        self.options = options
+        # pci_dev contains pci address for the interface, it will be populated
+        # when interface is added to config object. It will be determined
+        # either through ethtool or by looking up the dpdk mapping file.
+        self.pci_dev = None
+
+    @staticmethod
+    def from_json(json):
+        name = _get_required_field(json, 'name', 'VppInterface')
+        uio_driver = json.get('uio_driver', 'vfio-pci')
+        options = json.get('options', '')
+
+        opts = _BaseOpts.base_opts_from_json(json)
+        return VppInterface(name, *opts, uio_driver=uio_driver,
+                            options=options)
+
+
+class VppBond(_BaseOpts):
+    """Base class for VPP Bond."""
+    def __init__(self, name, use_dhcp=False, use_dhcpv6=False, addresses=None,
+                 routes=None, mtu=None, primary=False, nic_mapping=None,
+                 persist_mapping=False, defroute=True, dhclient_args=None,
+                 dns_servers=None, nm_controlled=False,
+                 members=None, bonding_options=None):
+        addresses = addresses or []
+        members = members or []
+
+        super(VppBond, self).__init__(name, use_dhcp, use_dhcpv6,
+                                      addresses, routes, mtu, primary,
+                                      nic_mapping, persist_mapping,
+                                      defroute, dhclient_args,
+                                      dns_servers, nm_controlled)
+        self.members = members
+        self.bonding_options = bonding_options
+
+    @staticmethod
+    def from_json(json):
+        name = _get_required_field(json, 'name', 'VppBond')
+        bonding_options = json.get('bonding_options', '')
+
+        (use_dhcp, use_dhcpv6, addresses, routes, mtu, nic_mapping,
+         persist_mapping, defroute, dhclient_args,
+         dns_servers, nm_controlled) = _BaseOpts.base_opts_from_json(
+             json, include_primary=False)
+
+        members = []
+        members_json = json.get('members', None)
+        if members_json:
+            if isinstance(members_json, list):
+                for member in members_json:
+                    if not member.get('nic_mapping'):
+                        member.update({'nic_mapping': nic_mapping})
+                    member.update({'persist_mapping': persist_mapping})
+                    obj = object_from_json(member)
+                    if isinstance(obj, VppInterface):
+                        members.append(obj)
+                    else:
+                        msg = 'Members must be of type vpp_interface'
+                        raise InvalidConfigException(msg)
+            else:
+                msg = 'Members must be a list.'
+                raise InvalidConfigException(msg)
+
+        return VppBond(name, use_dhcp=use_dhcp, use_dhcpv6=use_dhcpv6,
+                       addresses=addresses, routes=routes, mtu=mtu,
+                       members=members, nic_mapping=nic_mapping,
+                       persist_mapping=persist_mapping,
+                       defroute=defroute, dhclient_args=dhclient_args,
+                       dns_servers=dns_servers, nm_controlled=nm_controlled,
+                       bonding_options=bonding_options)
