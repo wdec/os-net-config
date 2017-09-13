@@ -639,7 +639,9 @@ class IfcfgNetConfig(os_net_config.NetConfig):
                 vpp_interface.name, False)
         vpp_interface.hwaddr = utils.interface_mac(vpp_interface.name)
         if not self.noop:
-            self.ifdown(vpp_interface.name)
+            msg = 'Shutting down interface %s' % vpp_interface.name
+            self.execute(msg, 'ip', 'link', 'set', vpp_interface.name, 'down',
+                         check_exit_code=False)
             remove_ifcfg_config(vpp_interface.name)
         logger.info('adding vpp interface: %s %s'
                     % (vpp_interface.name, vpp_interface.pci_dev))
