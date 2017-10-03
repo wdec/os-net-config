@@ -320,7 +320,7 @@ def restart_vpp(vpp_interfaces):
             processutils.execute('modprobe', 'vfio-pci')
     logger.info('Restarting VPP')
     processutils.execute('systemctl', 'restart', 'vpp')
-    time.sleep(10)
+    time.sleep(40)
 
 
 def _get_vpp_interface(pci_addr):
