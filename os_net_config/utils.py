@@ -344,8 +344,9 @@ def _get_vpp_interface(pci_addr):
         return None
 
     try:
-        processutils.execute('systemctl', 'is-active', 'vpp')
-        out, err = processutils.execute('vppctl', 'show', 'interface')
+        processutils.execute('systemctl', 'is-active', 'vpp', attempts=15)
+        out, err = processutils.execute('vppctl', 'show', 'interface', attempts=20)
+        logger.debug('vppctl show interface \n %s' % out)
         m = re.search(r':([0-9a-fA-F]{2}):([0-9a-fA-F]{2}).([0-9a-fA-F])',
                       pci_addr)
         if m:
@@ -381,9 +382,9 @@ def _get_vpp_bond(member_ids):
     member_ids.sort()
     member_ids_str = ' '.join(member_ids)
 
-    processutils.execute('systemctl', 'is-active', 'vpp')
+    processutils.execute('systemctl', 'is-active', 'vpp', attempts=15)
     out, err = processutils.execute('vppctl', 'show',
-                                    'hardware-interfaces', 'bond', 'brief')
+                                    'hardware-interfaces', 'bond', 'brief', attempts=20)
     logger.debug('vppctl show hardware-interfaces bond brief\n%s' % out)
     m = re.search(r'^\s*(BondEthernet\d+)\s+(\d+)\s+.+Slave-Idx:\s+%s\s*$' %
                   member_ids_str,
@@ -527,17 +528,14 @@ def update_vpp_mapping(vpp_interfaces, vpp_bonds):
     :param vpp_bonds: List of VPP bond objects
     """
     cli_list = []
-
+    restart_vpp(vpp_interfaces)
     for vpp_int in vpp_interfaces:
         # Try to get VPP interface name. In case VPP service is down
-        # for some reason, we will restart VPP and try again. Currently
-        # only trying one more time, can turn into a retry_counter if needed
-        # in the future.
-        for i in range(2):
+        # for some reason, we will re-attempt but not force a restart
+        logger.debug('Trying to determine VPP interface for PCI: %s' % vpp_int.pci_dev)
+        for i in range(3):
             int_info = _get_vpp_interface(vpp_int.pci_dev)
-            if not int_info:
-                restart_vpp(vpp_interfaces)
-            else:
+            if int_info:
                 vpp_int.vpp_name = int_info['name']
                 vpp_int.vpp_idx = int_info['index']
                 break
