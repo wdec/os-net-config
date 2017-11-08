@@ -528,10 +528,9 @@ def update_vpp_mapping(vpp_interfaces, vpp_bonds):
     :param vpp_bonds: List of VPP bond objects
     """
     cli_list = []
-    restart_vpp(vpp_interfaces)
     for vpp_int in vpp_interfaces:
         # Try to get VPP interface name. In case VPP service is down
-        # for some reason, we will re-attempt but not force a restart
+        # for some reason, we will re-attempt and force a restart once (just in case)
         logger.debug('Trying to determine VPP interface for PCI: %s' % vpp_int.pci_dev)
         for i in range(3):
             int_info = _get_vpp_interface(vpp_int.pci_dev)
@@ -539,6 +538,8 @@ def update_vpp_mapping(vpp_interfaces, vpp_bonds):
                 vpp_int.vpp_name = int_info['name']
                 vpp_int.vpp_idx = int_info['index']
                 break
+            elif i == 1 and not int_info:
+                restart_vpp(vpp_interfaces)
         else:
             raise VppException('Interface %s with pci address %s not '
                                'bound to vpp'
