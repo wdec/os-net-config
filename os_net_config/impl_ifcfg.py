@@ -952,7 +952,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
             for ifcfg_file in glob.iglob(cleanup_pattern()):
                 if ifcfg_file not in all_file_names:
                     interface_name = ifcfg_file[len(cleanup_pattern()) - 1:]
-                    if interface_name != 'lo':
+                    if interface_name not in ['lo', 'vnet']:
                         logger.info('cleaning up interface: %s'
                                     % interface_name)
                         self.ifdown(interface_name)

@@ -106,7 +106,7 @@ def _is_active_nic(interface_name):
 
 def _is_available_nic(interface_name, check_active=True):
     try:
-        if interface_name == 'lo':
+        if interface_name in ['lo', 'vnet']:
             return False
 
         device_dir = _SYS_CLASS_NET + '/%s/device' % interface_name
