@@ -348,8 +348,8 @@ def _get_vpp_interface(pci_addr, retry=20, sleep=5):
 
     for _ in range(retry):
         try:
-           # processutils.execute('systemctl', 'is-active', 'vpp', attempts=15)
-            out, err = processutils.execute('vppctl', 'show', 'interface')
+            # Check exit code is a workaround used due to vppctl terminating the pipe prematurely
+            out, err = processutils.execute('vppctl', 'show', 'interface', check_exit_code=[0, -13])
             logger.debug('vppctl show interface \n %s' % out)
             m = re.search(r':([0-9a-fA-F]{2}):([0-9a-fA-F]{2}).([0-9a-fA-F])',
                           pci_addr)
@@ -390,8 +390,9 @@ def _get_vpp_bond(member_ids, retry=20, sleep=5):
 
     for _ in range (retry):
         try:
+            # Check exit code is a workaround used due to vppctl terminating the pipe prematurely
             out, err = processutils.execute('vppctl', 'show',
-                                        'hardware-interfaces', 'bond', 'brief')
+                                        'hardware-interfaces', 'bond', 'brief', check_exit_code=[0, -13])
             logger.debug('vppctl show hardware-interfaces bond brief\n%s' % out)
             m = re.search(r'^\s*(BondEthernet\d+)\s+(\d+)\s+.+Slave-Idx:\s+%s\s*$' %
                       member_ids_str,
@@ -549,18 +550,14 @@ def update_vpp_mapping(vpp_interfaces, vpp_bonds):
         # Try to get VPP interface name. In case VPP service is down
         # for some reason, we will re-attempt and force a restart once (just in case)
         logger.debug('Trying to determine VPP interface for PCI: %s' % vpp_int.pci_dev)
-        for i in range(3):
-            int_info = _get_vpp_interface(vpp_int.pci_dev)
-            if int_info:
-                vpp_int.vpp_name = int_info['name']
-                vpp_int.vpp_idx = int_info['index']
-                break
-            elif i == 1:
-                restart_vpp(vpp_interfaces)
+        int_info = _get_vpp_interface(vpp_int.pci_dev)
+        if int_info:
+            vpp_int.vpp_name = int_info['name']
+            vpp_int.vpp_idx = int_info['index']
         else:
             raise VppException('Interface %s with pci address %s not '
-                               'bound to vpp'
-                               % (vpp_int.name, vpp_int.pci_dev))
+                           'bound to vpp'
+                           % (vpp_int.name, vpp_int.pci_dev))
 
         # Generate content of startup script for VPP
         if not vpp_bonds:
@@ -579,6 +576,7 @@ def update_vpp_mapping(vpp_interfaces, vpp_bonds):
                          vpp_int.uio_driver)
 
     for vpp_bond in vpp_bonds:
+        logger.debug('Trying to determine VPP interface for bond: %s' % vpp_bond.name)
         bond_ids = [member.vpp_idx for member in vpp_bond.members]
         bond_info = _get_vpp_bond(bond_ids)
         if bond_info:
