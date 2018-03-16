@@ -25,26 +25,30 @@ from os_net_config import utils
 class TestRoute(base.TestCase):
 
     def test_from_json(self):
-        data = '{"next_hop": "172.19.0.1", "ip_netmask": "172.19.0.0/24"}'
+        data = '{"next_hop": "172.19.0.1", "ip_netmask": "172.19.0.0/24", ' \
+               '"route_options": "metric 10"}'
         route = objects.Route.from_json(json.loads(data))
         self.assertEqual("172.19.0.1", route.next_hop)
         self.assertEqual("172.19.0.0/24", route.ip_netmask)
         self.assertFalse(route.default)
+        self.assertEqual("metric 10", route.route_options)
 
     def test_from_json_default_route(self):
         data = '{"next_hop": "172.19.0.1", "ip_netmask": "172.19.0.0/24", ' \
-               '"default": true}'
+               '"default": true, "route_options": "metric 10"}'
         route = objects.Route.from_json(json.loads(data))
         self.assertEqual("172.19.0.1", route.next_hop)
         self.assertEqual("172.19.0.0/24", route.ip_netmask)
         self.assertTrue(route.default)
+        self.assertEqual("metric 10", route.route_options)
 
         data = '{"next_hop": "172.19.0.1", "ip_netmask": "172.19.0.0/24", ' \
-               '"default": "true"}'
+               '"default": "true", "route_options": "metric 10"}'
         route = objects.Route.from_json(json.loads(data))
         self.assertEqual("172.19.0.1", route.next_hop)
         self.assertEqual("172.19.0.0/24", route.ip_netmask)
         self.assertTrue(route.default)
+        self.assertEqual("metric 10", route.route_options)
 
 
 class TestAddress(base.TestCase):
@@ -140,6 +144,46 @@ class TestInterface(base.TestCase):
         interface1 = objects.object_from_json(json.loads(data))
         self.assertEqual("--foobar", interface1.dhclient_args)
 
+    def test_from_json_nm_controlled_false(self):
+        data = """{
+"type": "interface",
+"name": "em1",
+"nm_controlled": false
+}
+"""
+        interface1 = objects.object_from_json(json.loads(data))
+        self.assertFalse(interface1.nm_controlled)
+
+    def test_from_json_nm_controlled_true(self):
+        data = """{
+"type": "interface",
+"name": "em1",
+"nm_controlled": true
+}
+"""
+        interface1 = objects.object_from_json(json.loads(data))
+        self.assertTrue(interface1.nm_controlled)
+
+    def test_from_json_nm_controlled_false_boolstr(self):
+        data = """{
+"type": "interface",
+"name": "em1",
+"nm_controlled": "no"
+}
+"""
+        interface1 = objects.object_from_json(json.loads(data))
+        self.assertFalse(interface1.nm_controlled)
+
+    def test_from_json_nm_controlled_true_boolstr(self):
+        data = """{
+"type": "interface",
+"name": "em1",
+"nm_controlled": "yes"
+}
+"""
+        interface1 = objects.object_from_json(json.loads(data))
+        self.assertTrue(interface1.nm_controlled)
+
     def test_from_json_dns_servers(self):
         data = """{
 "type": "interface",
@@ -173,7 +217,8 @@ class TestInterface(base.TestCase):
 }],
 "routes": [{
     "next_hop": "192.0.2.1",
-    "ip_netmask": "192.0.2.1/24"
+    "ip_netmask": "192.0.2.1/24",
+    "route_options": "metric 10"
 }]
 }
 """
@@ -189,6 +234,7 @@ class TestInterface(base.TestCase):
         route1 = interface.routes[0]
         self.assertEqual("192.0.2.1", route1.next_hop)
         self.assertEqual("192.0.2.1/24", route1.ip_netmask)
+        self.assertEqual("metric 10", route1.route_options)
 
 
 class TestVlan(base.TestCase):
@@ -288,6 +334,35 @@ class TestBridge(base.TestCase):
         self.assertEqual("em2", interface2.name)
         self.assertTrue(interface2.ovs_port)
         self.assertEqual("br-foo", interface2.bridge_name)
+
+    def test_from_json_ovs_extra(self):
+        data = """{
+"type": "ovs_bridge",
+"name": "br-foo",
+"ovs_extra": ["bar"],
+"ovs_fail_mode": "standalone"
+}
+"""
+        bridge = objects.object_from_json(json.loads(data))
+        self.assertTrue(3 == len(bridge.ovs_extra))
+        self.assertItemsEqual(["bar",
+                               "set bridge br-foo fail_mode=standalone",
+                               "del-controller br-foo"],
+                              bridge.ovs_extra)
+
+    def test_from_json_ovs_extra_string(self):
+        data = """{
+"type": "ovs_bridge",
+"name": "br-foo",
+"ovs_extra": "bar",
+"ovs_fail_mode": "standalone"
+}
+"""
+        bridge = objects.object_from_json(json.loads(data))
+        self.assertItemsEqual(["bar",
+                               "set bridge br-foo fail_mode=standalone",
+                               "del-controller br-foo"],
+                              bridge.ovs_extra)
 
 
 class TestLinuxBridge(base.TestCase):
@@ -422,7 +497,7 @@ class TestIvsInterface(base.TestCase):
                                 objects.IvsBridge.from_json,
                                 json.loads(data))
         expected = 'IVS does not support bond interfaces.'
-        self.assertIn(expected, err)
+        self.assertIn(expected, six.text_type(err))
 
 
 class TestNfvswitchBridge(base.TestCase):
@@ -430,7 +505,7 @@ class TestNfvswitchBridge(base.TestCase):
     def test_from_json(self):
         data = """{
 "type": "nfvswitch_bridge",
-"cpus": "2,3,4,5",
+"options": "-c 2,3,4,5",
 "members": [
         {"type": "interface","name": "nic1"},
         {"type": "interface","name": "nic2"}
@@ -439,7 +514,7 @@ class TestNfvswitchBridge(base.TestCase):
 """
         bridge = objects.object_from_json(json.loads(data))
         self.assertEqual("nfvswitch", bridge.name)
-        self.assertEqual("2,3,4,5", bridge.cpus)
+        self.assertEqual("-c 2,3,4,5", bridge.options)
         interface1 = bridge.members[0]
         self.assertEqual("nic1", interface1.name)
         self.assertEqual(False, interface1.ovs_port)
@@ -454,7 +529,7 @@ class TestNfvswitchInterface(base.TestCase):
     def test_nfvswitch_internal_from_json(self):
         data = """{
 "type": "nfvswitch_bridge",
-"cpus": "2,3,4,5",
+"options": "-c 2,3,4,5",
 "members": [
         {"type": "nfvswitch_internal", "name": "storage", "vlan_id": 202},
         {"type": "nfvswitch_internal", "name": "api", "vlan_id": 201}
@@ -463,7 +538,7 @@ class TestNfvswitchInterface(base.TestCase):
 """
         bridge = objects.object_from_json(json.loads(data))
         self.assertEqual("nfvswitch", bridge.name)
-        self.assertEqual("2,3,4,5", bridge.cpus)
+        self.assertEqual("-c 2,3,4,5", bridge.options)
         interface1 = bridge.members[0]
         self.assertEqual("storage202", interface1.name)
         interface2 = bridge.members[1]
@@ -474,7 +549,7 @@ class TestNfvswitchInterface(base.TestCase):
     def test_bond_interface_from_json(self):
         data = """{
 "type": "nfvswitch_bridge",
-"cpus": "2,3,4,5",
+"options": "-c 2,3,4,5",
 "members": [{
         "type": "linux_bond", "name": "bond1", "members":
             [{"type": "interface", "name": "nic2"},
@@ -487,7 +562,7 @@ class TestNfvswitchInterface(base.TestCase):
                                 objects.NfvswitchBridge.from_json,
                                 json.loads(data))
         expected = 'NFVSwitch does not support bond interfaces.'
-        self.assertIn(expected, err)
+        self.assertIn(expected, six.text_type(err))
 
 
 class TestBond(base.TestCase):
@@ -696,7 +771,8 @@ class TestOvsTunnel(base.TestCase):
         bridge = objects.object_from_json(json.loads(data))
         self.assertEqual("br-foo", bridge.name)
         self.assertEqual(["set bridge br-foo something",
-                          "set bridge br-foo fail_mode=standalone"],
+                          "set bridge br-foo fail_mode=standalone",
+                          "del-controller br-foo"],
                          bridge.ovs_extra)
         tun0 = bridge.members[0]
         self.assertEqual("tun0", tun0.name)
@@ -817,7 +893,8 @@ class TestIbInterface(base.TestCase):
 }],
 "routes": [{
     "next_hop": "192.0.2.1",
-    "ip_netmask": "192.0.2.1/24"
+    "ip_netmask": "192.0.2.1/24",
+    "route_options": "metric 10"
 }]
 }
 """
@@ -832,6 +909,7 @@ class TestIbInterface(base.TestCase):
         route1 = ib_interface.routes[0]
         self.assertEqual("192.0.2.1", route1.next_hop)
         self.assertEqual("192.0.2.1/24", route1.ip_netmask)
+        self.assertEqual("metric 10", route1.route_options)
 
 
 class TestNicMapping(base.TestCase):

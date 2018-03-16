@@ -111,7 +111,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
         self.interface_data = {}
         self.ivsinterface_data = {}
         self.nfvswitch_intiface_data = {}
-        self.nfvswitch_cpus = None
+        self.nfvswitch_options = None
         self.vlan_data = {}
         self.route_data = {}
         self.route6_data = {}
@@ -300,6 +300,20 @@ class IfcfgNetConfig(os_net_config.NetConfig):
             data += "DEVICETYPE=ovs\n"
             data += "TYPE=OVSDPDKPort\n"
             data += "OVS_BRIDGE=%s\n" % base_opt.bridge_name
+            # Validation of DPDK port having only one interface is done prior
+            # to this. So accesing the interface name statically.
+            # Also pci_address would be valid here, since
+            # bind_dpdk_interfaces() is invoked before this.
+            pci_address = utils.get_stored_pci_address(
+                base_opt.members[0].name, self.noop)
+            ovs_extra.append("set Interface $DEVICE options:dpdk-devargs="
+                             "%s" % pci_address)
+            if base_opt.mtu:
+                ovs_extra.append("set Interface $DEVICE mtu_request=$MTU")
+            if base_opt.rx_queue:
+                data += "RX_QUEUE=%i\n" % base_opt.rx_queue
+                ovs_extra.append("set Interface $DEVICE " +
+                                 "options:n_rxq=$RX_QUEUE")
         elif isinstance(base_opt, objects.OvsDpdkBond):
             ovs_extra.extend(base_opt.ovs_extra)
             # Referring to bug:1643026, the below commenting of the interfaces,
@@ -313,8 +327,29 @@ class IfcfgNetConfig(os_net_config.NetConfig):
             data += "TYPE=OVSDPDKBond\n"
             data += "OVS_BRIDGE=%s\n" % base_opt.bridge_name
             if base_opt.members:
+                for bond_member in base_opt.members:
+                    # Validation of DPDK port having only one interface is done
+                    # prior to this. So accesing the interface name statically.
+                    # Also pci_address would be valid here, since
+                    # bind_dpdk_interfaces () is invoked before this.
+                    pci_address = utils.get_stored_pci_address(
+                        bond_member.members[0].name, self.noop)
+                    ovs_extra.append("set Interface %s options:"
+                                     "dpdk-devargs=%s"
+                                     % (bond_member.name, pci_address))
                 members = [member.name for member in base_opt.members]
                 data += ("BOND_IFACES=\"%s\"\n" % " ".join(members))
+                # MTU configuration given for the OvsDpdkbond shall be applied
+                # to each of the members of the OvsDpdkbond
+                if base_opt.mtu:
+                    for member in base_opt.members:
+                        ovs_extra.append("set Interface %s mtu_request=$MTU" %
+                                         member.name)
+                if base_opt.rx_queue:
+                    data += "RX_QUEUE=%i\n" % base_opt.rx_queue
+                    for member in base_opt.members:
+                        ovs_extra.append("set Interface %s options:n_rxq="
+                                         "$RX_QUEUE" % member.name)
             if base_opt.ovs_options:
                 data += "OVS_OPTIONS=\"%s\"\n" % base_opt.ovs_options
             ovs_extra.extend(base_opt.ovs_extra)
@@ -364,10 +399,10 @@ class IfcfgNetConfig(os_net_config.NetConfig):
             data += "DHCLIENTARGS=%s\n" % base_opt.dhclient_args
         if base_opt.dns_servers:
             data += "DNS1=%s\n" % base_opt.dns_servers[0]
-            if len(base_opt.dns_servers) == 2:
+            if len(base_opt.dns_servers) >= 2:
                 data += "DNS2=%s\n" % base_opt.dns_servers[1]
-            elif len(base_opt.dns_servers) > 2:
-                logger.warning('ifcfg format supports a max of 2 dns servers.')
+                if len(base_opt.dns_servers) > 2:
+                    logger.warning('ifcfg format supports max 2 resolvers.')
         return data
 
     def _add_routes(self, interface_name, routes=[]):
@@ -377,24 +412,29 @@ class IfcfgNetConfig(os_net_config.NetConfig):
         data6 = ""
         first_line6 = ""
         for route in routes:
+            options = ""
+            if route.route_options:
+                options = " %s" % (route.route_options)
             if ":" not in route.next_hop:
                 # Route is an IPv4 route
                 if route.default:
-                    first_line = "default via %s dev %s\n" % (route.next_hop,
-                                                              interface_name)
+                    first_line = "default via %s dev %s%s\n" % (
+                                 route.next_hop, interface_name,
+                                 options)
                 else:
-                    data += "%s via %s dev %s\n" % (route.ip_netmask,
-                                                    route.next_hop,
-                                                    interface_name)
+                    data += "%s via %s dev %s%s\n" % (
+                            route.ip_netmask, route.next_hop,
+                            interface_name, options)
             else:
                 # Route is an IPv6 route
                 if route.default:
-                    first_line6 = "default via %s dev %s\n" % (route.next_hop,
-                                                               interface_name)
+                    first_line6 = "default via %s dev %s%s\n" % (
+                                  route.next_hop, interface_name,
+                                  options)
                 else:
-                    data6 += "%s via %s dev %s\n" % (route.ip_netmask,
-                                                     route.next_hop,
-                                                     interface_name)
+                    data6 += "%s via %s dev %s%s\n" % (
+                             route.ip_netmask, route.next_hop,
+                             interface_name, options)
         self.route_data[interface_name] = first_line + data
         self.route6_data[interface_name] = first_line6 + data6
         logger.debug('route data: %s' % self.route_data[interface_name])
@@ -510,7 +550,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
         is running, the nfvswitch virtual switch will be available.
         :param bridge: The NfvswitchBridge object to add.
         """
-        self.nfvswitch_cpus = bridge.cpus
+        self.nfvswitch_options = bridge.options
 
     def add_bond(self, bond):
         """Add an OvsBond object to the net config object.
@@ -679,9 +719,9 @@ class IfcfgNetConfig(os_net_config.NetConfig):
                                   nfvswitch_internal_ifaces):
         """Generate configuration content for nfvswitch."""
 
-        cpu_str = ""
-        if self.nfvswitch_cpus:
-            cpu_str = " -c " + self.nfvswitch_cpus
+        options_str = ""
+        if self.nfvswitch_options:
+            options_str = self.nfvswitch_options
 
         ifaces = []
         for iface in nfvswitch_ifaces:
@@ -695,7 +735,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
             ifaces.append(iface)
         internal_str = ''.join(ifaces)
 
-        data = "SETUP_ARGS=\"%s%s%s\"" % (cpu_str, iface_str, internal_str)
+        data = "SETUP_ARGS=\"%s%s%s\"" % (options_str, iface_str, internal_str)
         return data
 
     def apply(self, cleanup=False, activate=True):
@@ -731,7 +771,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
         vpp_interfaces = self.vpp_interface_data.values()
         vpp_bonds = self.vpp_bond_data.values()
 
-        for interface_name, iface_data in self.interface_data.iteritems():
+        for interface_name, iface_data in self.interface_data.items():
             route_data = self.route_data.get(interface_name, '')
             route6_data = self.route6_data.get(interface_name, '')
             interface_path = self.root_dir + ifcfg_config_path(interface_name)
@@ -764,7 +804,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
                 logger.info('No changes required for interface: %s' %
                             interface_name)
 
-        for interface_name, iface_data in self.ivsinterface_data.iteritems():
+        for interface_name, iface_data in self.ivsinterface_data.items():
             route_data = self.route_data.get(interface_name, '')
             route6_data = self.route6_data.get(interface_name, '')
             interface_path = self.root_dir + ifcfg_config_path(interface_name)
@@ -785,7 +825,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
                 logger.info('No changes required for ivs interface: %s' %
                             interface_name)
 
-        for iface_name, iface_data in self.nfvswitch_intiface_data.iteritems():
+        for iface_name, iface_data in self.nfvswitch_intiface_data.items():
             route_data = self.route_data.get(iface_name, '')
             route6_data = self.route6_data.get(iface_name, '')
             iface_path = self.root_dir + ifcfg_config_path(iface_name)
@@ -806,7 +846,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
                 logger.info('No changes required for nfvswitch interface: %s' %
                             iface_name)
 
-        for vlan_name, vlan_data in self.vlan_data.iteritems():
+        for vlan_name, vlan_data in self.vlan_data.items():
             route_data = self.route_data.get(vlan_name, '')
             route6_data = self.route6_data.get(vlan_name, '')
             vlan_path = self.root_dir + ifcfg_config_path(vlan_name)
@@ -826,7 +866,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
                 logger.info('No changes required for vlan interface: %s' %
                             vlan_name)
 
-        for bridge_name, bridge_data in self.bridge_data.iteritems():
+        for bridge_name, bridge_data in self.bridge_data.items():
             route_data = self.route_data.get(bridge_name, '')
             route6_data = self.route6_data.get(bridge_name, '')
             bridge_path = self.root_dir + bridge_config_path(bridge_name)
@@ -850,7 +890,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
             else:
                 logger.info('No changes required for bridge: %s' % bridge_name)
 
-        for bridge_name, bridge_data in self.linuxbridge_data.iteritems():
+        for bridge_name, bridge_data in self.linuxbridge_data.items():
             route_data = self.route_data.get(bridge_name, '')
             route6_data = self.route6_data.get(bridge_name, '')
             bridge_path = self.root_dir + bridge_config_path(bridge_name)
@@ -870,7 +910,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
             else:
                 logger.info('No changes required for bridge: %s' % bridge_name)
 
-        for team_name, team_data in self.linuxteam_data.iteritems():
+        for team_name, team_data in self.linuxteam_data.items():
             route_data = self.route_data.get(team_name, '')
             route6_data = self.route6_data.get(team_name, '')
             team_path = self.root_dir + bridge_config_path(team_name)
@@ -891,7 +931,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
                 logger.info('No changes required for linux team: %s' %
                             team_name)
 
-        for bond_name, bond_data in self.linuxbond_data.iteritems():
+        for bond_name, bond_data in self.linuxbond_data.items():
             route_data = self.route_data.get(bond_name, '')
             route6_data = self.route6_data.get(bond_name, '')
             bond_path = self.root_dir + bridge_config_path(bond_name)
@@ -913,7 +953,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
                             bond_name)
 
         # Infiniband interfaces are handled similarly to Ethernet interfaces
-        for interface_name, iface_data in self.ib_interface_data.iteritems():
+        for interface_name, iface_data in self.ib_interface_data.items():
             route_data = self.route_data.get(interface_name, '')
             route6_data = self.route6_data.get(interface_name, '')
             interface_path = self.root_dir + ifcfg_config_path(interface_name)
@@ -990,7 +1030,7 @@ class IfcfgNetConfig(os_net_config.NetConfig):
             self.execute(msg, '/usr/bin/systemctl',
                          'restart', 'openvswitch')
 
-        for location, data in update_files.iteritems():
+        for location, data in update_files.items():
             self.write_config(location, data)
 
         if ivs_uplinks or ivs_interfaces:

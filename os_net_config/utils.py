@@ -239,6 +239,14 @@ def bind_dpdk_interfaces(ifname, driver, noop):
             except processutils.ProcessExecutionError:
                 msg = "Failed to bind interface %s with dpdk" % ifname
                 raise OvsDpdkBindException(msg)
+        else:
+            # Check if the pci address is already fetched and stored.
+            # If the pci address could not be fetched from dpdk_mapping.yaml
+            # raise OvsDpdkBindException, since the interface is neither
+            # available nor bound with dpdk.
+            if not get_stored_pci_address(ifname, noop):
+                msg = "Interface %s cannot be found" % ifname
+                raise OvsDpdkBindException(msg)
     else:
         logger.info('Interface %(name)s bound to DPDK driver %(driver)s '
                     'using driverctl command' %

@@ -137,7 +137,7 @@ class ENINetConfig(os_net_config.NetConfig):
             data += "    mtu %i\n" % interface.mtu
 
         if interface.hwaddr:
-            raise NotImplemented("hwaddr is not implemented.")
+            raise NotImplementedError("hwaddr is not implemented.")
 
         if ovs_extra:
             data += "    ovs_extra %s\n" % " -- ".join(ovs_extra)
@@ -184,14 +184,17 @@ class ENINetConfig(os_net_config.NetConfig):
         logger.info('adding custom route for interface: %s' % interface_name)
         data = ""
         for route in routes:
+            options = ""
+            if route.route_options:
+                options = " %s" % (route.route_options)
             if route.default and not route.ip_netmask:
                 rt = netaddr.IPNetwork("0.0.0.0/0")
             else:
                 rt = netaddr.IPNetwork(route.ip_netmask)
-            data += "up route add -net %s netmask %s gw %s\n" % (
-                    str(rt.ip), str(rt.netmask), route.next_hop)
-            data += "down route del -net %s netmask %s gw %s\n" % (
-                    str(rt.ip), str(rt.netmask), route.next_hop)
+            data += "up route add -net %s netmask %s gw %s%s\n" % (
+                    str(rt.ip), str(rt.netmask), route.next_hop, options)
+            data += "down route del -net %s netmask %s gw %s%s\n" % (
+                    str(rt.ip), str(rt.netmask), route.next_hop, options)
         self.routes[interface_name] = data
         logger.debug('route data: %s' % self.routes[interface_name])
 
@@ -212,12 +215,12 @@ class ENINetConfig(os_net_config.NetConfig):
 
         # write out bridges first. This ensures that an ifup -a
         # on reboot brings them up first
-        for bridge_name, bridge_data in self.bridges.iteritems():
+        for bridge_name, bridge_data in self.bridges.items():
             route_data = self.routes.get(bridge_name)
             bridge_data += (route_data or '')
             new_config += bridge_data
 
-        for interface_name, iface_data in self.interfaces.iteritems():
+        for interface_name, iface_data in self.interfaces.items():
             route_data = self.routes.get(interface_name)
             iface_data += (route_data or '')
             new_config += iface_data
@@ -238,6 +241,14 @@ class ENINetConfig(os_net_config.NetConfig):
 
                 for interface in self.interfaces.keys():
                     self.ifup(interface)
+
+                if self.errors:
+                    message = 'Failure(s) occurred when applying configuration'
+                    logger.error(message)
+                    for e in self.errors:
+                        logger.error('stdout: %s, stderr: %s', e.stdout,
+                                     e.stderr)
+                    raise os_net_config.ConfigurationError(message)
         else:
             logger.info('No interface changes are required.')
 

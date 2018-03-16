@@ -137,6 +137,24 @@ class TestUtils(base.TestCase):
         pci = utils.get_pci_address('nic2', False)
         self.assertEqual(None, pci)
 
+    def test_get_stored_pci_address_success(self):
+        def test_get_dpdk_map():
+            return [{'name': 'eth1', 'pci_address': '0000:00:09.0',
+                     'mac_address': '01:02:03:04:05:06',
+                     'driver': 'vfio-pci'}]
+
+        self.stubs.Set(utils, '_get_dpdk_map', test_get_dpdk_map)
+        pci = utils.get_stored_pci_address('eth1', False)
+        self.assertEqual('0000:00:09.0', pci)
+
+    def test_get_stored_pci_address_empty(self):
+        def test_get_dpdk_map():
+            return []
+
+        self.stubs.Set(utils, '_get_dpdk_map', test_get_dpdk_map)
+        pci = utils.get_stored_pci_address('eth1', False)
+        self.assertEqual(None, pci)
+
     def test_bind_dpdk_interfaces(self):
         def test_execute(name, dummy1, dummy2=None, dummy3=None):
             if 'ethtool' in name:
@@ -150,8 +168,10 @@ class TestUtils(base.TestCase):
         self.stubs.Set(processutils, 'execute', test_execute)
         self.stubs.Set(utils, '_get_dpdk_mac_address',
                        test_get_dpdk_mac_address)
-
-        utils.bind_dpdk_interfaces('nic2', 'vfio-pci', False)
+        try:
+            utils.bind_dpdk_interfaces('nic2', 'vfio-pci', False)
+        except utils.OvsDpdkBindException:
+            self.fail("Received OvsDpdkBindException unexpectedly")
 
     def test_bind_dpdk_interfaces_fail(self):
         def test_execute(name, dummy1, dummy2=None, dummy3=None):
@@ -169,6 +189,54 @@ class TestUtils(base.TestCase):
 
         self.assertRaises(utils.OvsDpdkBindException,
                           utils.bind_dpdk_interfaces, 'eth1', 'vfio-pci',
+                          False)
+
+    def test_bind_dpdk_interfaces_skip_valid_device(self):
+        def test_execute(name, dummy1, dummy2=None, dummy3=None):
+            if 'ethtool' in name:
+                return None, 'Error'
+            if 'driverctl' in name:
+                return None, None
+
+        def test_get_dpdk_mac_address(name):
+            return '01:02:03:04:05:06'
+
+        def test_get_dpdk_map():
+            return [{'name': 'eth1', 'pci_address': '0000:00:09.0',
+                     'mac_address': '01:02:03:04:05:06',
+                     'driver': 'vfio-pci'}]
+
+        self.stubs.Set(utils, '_get_dpdk_map', test_get_dpdk_map)
+        self.stubs.Set(processutils, 'execute', test_execute)
+        self.stubs.Set(utils, '_get_dpdk_mac_address',
+                       test_get_dpdk_mac_address)
+        try:
+            utils.bind_dpdk_interfaces('eth1', 'vfio-pci', False)
+        except utils.OvsDpdkBindException:
+            self.fail("Received OvsDpdkBindException unexpectedly")
+
+    def test_bind_dpdk_interfaces_fail_invalid_device(self):
+        def test_execute(name, dummy1, dummy2=None, dummy3=None):
+            if 'ethtool' in name:
+                return None, 'Error'
+            if 'driverctl' in name:
+                return None, None
+
+        def test_get_dpdk_mac_address(name):
+            return '01:02:03:04:05:06'
+
+        def test_get_dpdk_map():
+            return [{'name': 'eth1', 'pci_address': '0000:00:09.0',
+                     'mac_address': '01:02:03:04:05:06',
+                     'driver': 'vfio-pci'}]
+
+        self.stubs.Set(utils, '_get_dpdk_map', test_get_dpdk_map)
+        self.stubs.Set(processutils, 'execute', test_execute)
+        self.stubs.Set(utils, '_get_dpdk_mac_address',
+                       test_get_dpdk_mac_address)
+
+        self.assertRaises(utils.OvsDpdkBindException,
+                          utils.bind_dpdk_interfaces, 'eth2', 'vfio-pci',
                           False)
 
     def test__update_dpdk_map_new(self):
@@ -277,7 +345,7 @@ class TestUtils(base.TestCase):
 
         shutil.rmtree(tmpdir)
 
-    def test_get_vpp_interface(self):
+    def test_get_vpp_interface_name(self):
         def test_execute(name, dummy1, dummy2=None, dummy3=None):
             if 'systemctl' in name:
                 return None, None
@@ -286,14 +354,12 @@ class TestUtils(base.TestCase):
 
         self.stubs.Set(processutils, 'execute', test_execute)
 
-        int_info = utils._get_vpp_interface('0000:00:09.0')
-        self.assertIsNotNone(int_info)
-        self.assertEqual('GigabitEthernet0/9/0', int_info['name'])
-        self.assertEqual('1', int_info['index'])
-        self.assertIsNone(utils._get_vpp_interface(None))
-        self.assertIsNone(utils._get_vpp_interface('0000:01:09.0'))
+        self.assertEqual('GigabitEthernet0/9/0',
+                         utils._get_vpp_interface_name('0000:00:09.0'))
+        self.assertIsNone(utils._get_vpp_interface_name(None))
+        self.assertIsNone(utils._get_vpp_interface_name('0000:01:09.0'))
         self.assertRaises(utils.VppException,
-                          utils._get_vpp_interface, '0000:09.0')
+                          utils._get_vpp_interface_name, '0000:09.0')
 
     def test_get_vpp_bond(self):
         def test_execute(name, dummy1, dummy2=None, dummy3=None,

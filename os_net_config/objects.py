@@ -14,6 +14,11 @@
 # License for the specific language governing permissions and limitations
 # under the License.
 
+#
+# NOTE: When making changes to the object model, remember to also update
+#       schema.yaml to reflect changes to the schema of config files!
+#
+
 import logging
 import netaddr
 from oslo_utils import strutils
@@ -25,7 +30,8 @@ logger = logging.getLogger(__name__)
 
 _MAPPED_NICS = None
 
-DEFAULT_OVS_BRIDGE_FAIL_MODE = 'standalone'
+STANDALONE_FAIL_MODE = 'standalone'
+DEFAULT_OVS_BRIDGE_FAIL_MODE = STANDALONE_FAIL_MODE
 
 
 class InvalidConfigException(ValueError):
@@ -181,20 +187,30 @@ def format_ovs_extra(obj, templates):
     return [t.format(name=obj.name) for t in templates or []]
 
 
+def _add_fail_mode(fail_mode):
+    ovs_extra = ['set bridge {name} fail_mode=%s' % fail_mode]
+    if fail_mode == STANDALONE_FAIL_MODE:
+        ovs_extra.append('del-controller {name}')
+    return ovs_extra
+
+
 class Route(object):
     """Base class for network routes."""
 
-    def __init__(self, next_hop, ip_netmask="", default=False):
+    def __init__(self, next_hop, ip_netmask="", default=False,
+                 route_options=""):
         self.next_hop = next_hop
         self.ip_netmask = ip_netmask
         self.default = default
+        self.route_options = route_options
 
     @staticmethod
     def from_json(json):
         next_hop = _get_required_field(json, 'next_hop', 'Route')
         ip_netmask = json.get('ip_netmask', "")
+        route_options = json.get('route_options', "")
         default = strutils.bool_from_string(str(json.get('default', False)))
-        return Route(next_hop, ip_netmask, default)
+        return Route(next_hop, ip_netmask, default, route_options)
 
 
 class Address(object):
@@ -284,7 +300,8 @@ class _BaseOpts(object):
         mtu = json.get('mtu', None)
         dhclient_args = json.get('dhclient_args')
         dns_servers = json.get('dns_servers')
-        nm_controlled = json.get('nm_controlled')
+        nm_controlled = strutils.bool_from_string(str(json.get('nm_controlled',
+                                                      False)))
         primary = strutils.bool_from_string(str(json.get('primary', False)))
         addresses = []
         routes = []
@@ -338,8 +355,8 @@ class Interface(_BaseOpts):
                                         persist_mapping, defroute,
                                         dhclient_args, dns_servers,
                                         nm_controlled)
-        self.hotplug = hotplug
         self.ethtool_opts = ethtool_opts
+        self.hotplug = hotplug
 
     @staticmethod
     def from_json(json):
@@ -462,7 +479,7 @@ class OvsBridge(_BaseOpts):
         self.ovs_options = ovs_options
         ovs_extra = ovs_extra or []
         if fail_mode:
-            ovs_extra.append('set bridge {name} fail_mode=%s' % fail_mode)
+            ovs_extra.extend(_add_fail_mode(fail_mode))
         self.ovs_extra = format_ovs_extra(self, ovs_extra)
         for member in self.members:
             member.bridge_name = name
@@ -486,7 +503,9 @@ class OvsBridge(_BaseOpts):
          nm_controlled) = _BaseOpts.base_opts_from_json(
              json, include_primary=False)
         ovs_options = json.get('ovs_options')
-        ovs_extra = json.get('ovs_extra')
+        ovs_extra = json.get('ovs_extra', [])
+        if not isinstance(ovs_extra, list):
+            ovs_extra = [ovs_extra]
         fail_mode = json.get('ovs_fail_mode', DEFAULT_OVS_BRIDGE_FAIL_MODE)
 
         members = _update_members(json, nic_mapping, persist_mapping)
@@ -517,7 +536,7 @@ class OvsUserBridge(_BaseOpts):
         self.ovs_options = ovs_options
         ovs_extra = ovs_extra or []
         if fail_mode:
-            ovs_extra.append('set bridge {name} fail_mode=%s' % fail_mode)
+            ovs_extra.extend(_add_fail_mode(fail_mode))
         self.ovs_extra = format_ovs_extra(self, ovs_extra)
         for member in self.members:
             member.bridge_name = name
@@ -543,7 +562,9 @@ class OvsUserBridge(_BaseOpts):
          nm_controlled) = _BaseOpts.base_opts_from_json(
              json, include_primary=False)
         ovs_options = json.get('ovs_options')
-        ovs_extra = json.get('ovs_extra')
+        ovs_extra = json.get('ovs_extra', [])
+        if not isinstance(ovs_extra, list):
+            ovs_extra = [ovs_extra]
         fail_mode = json.get('ovs_fail_mode', DEFAULT_OVS_BRIDGE_FAIL_MODE)
 
         members = _update_members(json, nic_mapping, persist_mapping)
@@ -671,7 +692,7 @@ class NfvswitchBridge(_BaseOpts):
                  addresses=None, routes=None, mtu=1500, members=None,
                  nic_mapping=None, persist_mapping=False, defroute=True,
                  dhclient_args=None, dns_servers=None, nm_controlled=False,
-                 cpus=""):
+                 options=""):
         addresses = addresses or []
         routes = routes or []
         members = members or []
@@ -681,7 +702,7 @@ class NfvswitchBridge(_BaseOpts):
                                               nic_mapping, persist_mapping,
                                               defroute, dhclient_args,
                                               dns_servers, nm_controlled)
-        self.cpus = cpus
+        self.options = options
         self.members = members
         for member in self.members:
             if isinstance(member, OvsBond) or isinstance(member, LinuxBond):
@@ -701,16 +722,9 @@ class NfvswitchBridge(_BaseOpts):
 
         members = _update_members(json, nic_mapping, persist_mapping)
 
-        cpus = ''
-        cpus_json = json.get('cpus')
-        if cpus_json:
-            if isinstance(cpus_json, basestring):
-                cpus = cpus_json
-            else:
-                msg = '"cpus" must be a string of numbers separated by commas.'
-                raise InvalidConfigException(msg)
-        else:
-            msg = 'Config "cpus" is mandatory.'
+        options = json.get('options')
+        if not options:
+            msg = 'Config "options" is mandatory.'
             raise InvalidConfigException(msg)
 
         return NfvswitchBridge(name, use_dhcp=use_dhcp, use_dhcpv6=use_dhcpv6,
@@ -719,8 +733,7 @@ class NfvswitchBridge(_BaseOpts):
                                persist_mapping=persist_mapping,
                                defroute=defroute, dhclient_args=dhclient_args,
                                dns_servers=dns_servers,
-                               nm_controlled=nm_controlled,
-                               cpus=cpus)
+                               nm_controlled=nm_controlled, options=options)
 
 
 class LinuxTeam(_BaseOpts):
@@ -865,6 +878,8 @@ class OvsBond(_BaseOpts):
              json, include_primary=False)
         ovs_options = json.get('ovs_options')
         ovs_extra = json.get('ovs_extra', [])
+        if not isinstance(ovs_extra, list):
+            ovs_extra = [ovs_extra]
 
         members = _update_members(json, nic_mapping, persist_mapping)
 
@@ -904,6 +919,8 @@ class OvsTunnel(_BaseOpts):
         ovs_options = json.get('ovs_options', [])
         ovs_options = ['options:%s' % opt for opt in ovs_options]
         ovs_extra = json.get('ovs_extra', [])
+        if not isinstance(ovs_extra, list):
+            ovs_extra = [ovs_extra]
         opts = _BaseOpts.base_opts_from_json(json)
         return OvsTunnel(name, *opts, tunnel_type=tunnel_type,
                          ovs_options=ovs_options, ovs_extra=ovs_extra)
@@ -938,6 +955,8 @@ class OvsPatchPort(_BaseOpts):
         ovs_options = json.get('ovs_options', [])
         ovs_options = ['options:%s' % opt for opt in ovs_options]
         ovs_extra = json.get('ovs_extra', [])
+        if not isinstance(ovs_extra, list):
+            ovs_extra = [ovs_extra]
         opts = _BaseOpts.base_opts_from_json(json)
         return OvsPatchPort(name, *opts, bridge_name=bridge_name, peer=peer,
                             ovs_options=ovs_options, ovs_extra=ovs_extra)
@@ -975,7 +994,8 @@ class OvsDpdkPort(_BaseOpts):
                  routes=None, mtu=None, primary=False, nic_mapping=None,
                  persist_mapping=False, defroute=True, dhclient_args=None,
                  dns_servers=None, nm_controlled=False, members=None,
-                 driver='vfio-pci', ovs_options=None, ovs_extra=None):
+                 driver='vfio-pci', ovs_options=None, ovs_extra=None,
+                 rx_queue=None):
 
         super(OvsDpdkPort, self).__init__(name, use_dhcp, use_dhcpv6,
                                           addresses, routes, mtu, primary,
@@ -986,6 +1006,7 @@ class OvsDpdkPort(_BaseOpts):
         self.ovs_options = ovs_options or []
         self.ovs_extra = format_ovs_extra(self, ovs_extra)
         self.driver = driver
+        self.rx_queue = rx_queue
 
     @staticmethod
     def from_json(json):
@@ -1027,9 +1048,12 @@ class OvsDpdkPort(_BaseOpts):
             msg = 'DPDK Port should have one member as Interface'
             raise InvalidConfigException(msg)
 
+        rx_queue = json.get('rx_queue', None)
         ovs_options = json.get('ovs_options', [])
         ovs_options = ['options:%s' % opt for opt in ovs_options]
         ovs_extra = json.get('ovs_extra', [])
+        if not isinstance(ovs_extra, list):
+            ovs_extra = [ovs_extra]
         return OvsDpdkPort(name, use_dhcp=use_dhcp, use_dhcpv6=use_dhcpv6,
                            addresses=addresses, routes=routes, mtu=mtu,
                            primary=primary, nic_mapping=nic_mapping,
@@ -1038,7 +1062,7 @@ class OvsDpdkPort(_BaseOpts):
                            dns_servers=dns_servers,
                            nm_controlled=nm_controlled, members=members,
                            driver=driver, ovs_options=ovs_options,
-                           ovs_extra=ovs_extra)
+                           ovs_extra=ovs_extra, rx_queue=rx_queue)
 
 
 class OvsDpdkBond(_BaseOpts):
@@ -1048,7 +1072,7 @@ class OvsDpdkBond(_BaseOpts):
                  routes=None, mtu=None, primary=False, members=None,
                  ovs_options=None, ovs_extra=None, nic_mapping=None,
                  persist_mapping=False, defroute=True, dhclient_args=None,
-                 dns_servers=None, nm_controlled=False):
+                 dns_servers=None, nm_controlled=False, rx_queue=None):
         super(OvsDpdkBond, self).__init__(name, use_dhcp, use_dhcpv6,
                                           addresses, routes, mtu, primary,
                                           nic_mapping, persist_mapping,
@@ -1057,6 +1081,7 @@ class OvsDpdkBond(_BaseOpts):
         self.members = members or []
         self.ovs_options = ovs_options
         self.ovs_extra = format_ovs_extra(self, ovs_extra)
+        self.rx_queue = rx_queue
 
         for member in self.members:
             if member.primary:
@@ -1079,8 +1104,11 @@ class OvsDpdkBond(_BaseOpts):
          persist_mapping, defroute, dhclient_args,
          dns_servers, nm_controlled) = _BaseOpts.base_opts_from_json(
              json, include_primary=False)
+        rx_queue = json.get('rx_queue', None)
         ovs_options = json.get('ovs_options')
         ovs_extra = json.get('ovs_extra', [])
+        if not isinstance(ovs_extra, list):
+            ovs_extra = [ovs_extra]
         members = []
 
         # members
@@ -1108,7 +1136,7 @@ class OvsDpdkBond(_BaseOpts):
                            persist_mapping=persist_mapping,
                            defroute=defroute, dhclient_args=dhclient_args,
                            dns_servers=dns_servers,
-                           nm_controlled=nm_controlled)
+                           nm_controlled=nm_controlled, rx_queue=rx_queue)
 
 
 class VppInterface(_BaseOpts):

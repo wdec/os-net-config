@@ -18,6 +18,7 @@ import tempfile
 
 from oslo_concurrency import processutils
 
+import os_net_config
 from os_net_config import impl_eni
 from os_net_config import objects
 from os_net_config.tests import base
@@ -72,8 +73,9 @@ iface br0 inet dhcp
     pre-up ip addr flush dev eth0
 """
 
-_OVS_BRIDGE_DHCP_STANDALONE = _OVS_BRIDGE_DHCP + \
-    "    ovs_extra set bridge br0 fail_mode=standalone\n"
+_OVS_BRIDGE_DHCP_STANDALONE = _OVS_BRIDGE_DHCP + (
+    "    ovs_extra set bridge br0 fail_mode=standalone "
+    "-- del-controller br0\n")
 
 _OVS_BRIDGE_DHCP_SECURE = _OVS_BRIDGE_DHCP + \
     "    ovs_extra set bridge br0 fail_mode=secure\n"
@@ -101,6 +103,8 @@ iface vlan5 inet manual
 
 _RTS = """up route add -net 172.19.0.0 netmask 255.255.255.0 gw 192.168.1.1
 down route del -net 172.19.0.0 netmask 255.255.255.0 gw 192.168.1.1
+up route add -net 172.20.0.0 netmask 255.255.255.0 gw 192.168.1.5 metric 100
+down route del -net 172.20.0.0 netmask 255.255.255.0 gw 192.168.1.5 metric 100
 """
 
 
@@ -187,8 +191,10 @@ class TestENINetConfig(base.TestCase):
 
     def test_network_with_routes(self):
         route1 = objects.Route('192.168.1.1', '172.19.0.0/24')
+        route2 = objects.Route('192.168.1.5', '172.20.0.0/24',
+                               route_options="metric 100")
         v4_addr = objects.Address('192.168.1.2/24')
-        interface = self._default_interface([v4_addr], [route1])
+        interface = self._default_interface([v4_addr], [route1, route2])
         self.provider.add_interface(interface)
         self.assertEqual(_V4_IFACE_STATIC_IP, self.get_interface_config())
         self.assertEqual(_RTS, self.get_route_config())
@@ -318,10 +324,12 @@ class TestENINetConfigApply(base.TestCase):
         super(TestENINetConfigApply, self).tearDown()
 
     def test_network_apply(self):
-        route = objects.Route('192.168.1.1', '172.19.0.0/24')
+        route1 = objects.Route('192.168.1.1', '172.19.0.0/24')
+        route2 = objects.Route('192.168.1.5', '172.20.0.0/24',
+                               route_options="metric 100")
         v4_addr = objects.Address('192.168.1.2/24')
         interface = objects.Interface('eth0', addresses=[v4_addr],
-                                      routes=[route])
+                                      routes=[route1, route2])
         self.provider.add_interface(interface)
 
         self.provider.apply()
@@ -330,10 +338,12 @@ class TestENINetConfigApply(base.TestCase):
         self.assertIn('eth0', self.ifup_interface_names)
 
     def test_apply_noactivate(self):
-        route = objects.Route('192.168.1.1', '172.19.0.0/24')
+        route1 = objects.Route('192.168.1.1', '172.19.0.0/24')
+        route2 = objects.Route('192.168.1.5', '172.20.0.0/24',
+                               route_options="metric 100")
         v4_addr = objects.Address('192.168.1.2/24')
         interface = objects.Interface('eth0', addresses=[v4_addr],
-                                      routes=[route])
+                                      routes=[route1, route2])
         self.provider.add_interface(interface)
 
         self.provider.apply(activate=False)
@@ -352,3 +362,33 @@ class TestENINetConfigApply(base.TestCase):
         self.assertEqual((_OVS_BRIDGE_DHCP + _OVS_PORT_IFACE), iface_data)
         self.assertIn('eth0', self.ifup_interface_names)
         self.assertIn('br0', self.ifup_interface_names)
+
+    def _failed_execute(*args, **kwargs):
+        if kwargs.get('check_exit_code', True):
+            raise processutils.ProcessExecutionError('Test stderr',
+                                                     'Test stdout',
+                                                     str(kwargs))
+
+    def test_interface_failure(self):
+        self.stubs.Set(processutils, 'execute', self._failed_execute)
+        v4_addr = objects.Address('192.168.1.2/24')
+        interface = objects.Interface('em1', addresses=[v4_addr])
+        self.provider.add_interface(interface)
+
+        self.assertRaises(os_net_config.ConfigurationError,
+                          self.provider.apply)
+        self.assertEqual(1, len(self.provider.errors))
+
+    def test_interface_failure_multiple(self):
+        self.stubs.Set(processutils, 'execute', self._failed_execute)
+        v4_addr = objects.Address('192.168.1.2/24')
+        interface = objects.Interface('em1', addresses=[v4_addr])
+        v4_addr2 = objects.Address('192.168.2.2/24')
+        interface2 = objects.Interface('em2', addresses=[v4_addr2])
+        self.provider.add_interface(interface)
+        self.provider.add_interface(interface2)
+
+        self.assertRaises(os_net_config.ConfigurationError,
+                          self.provider.apply)
+        # Even though the first one failed, we should have attempted both
+        self.assertEqual(2, len(self.provider.errors))

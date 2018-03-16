@@ -30,6 +30,10 @@ class NotImplemented(Exception):
     pass
 
 
+class ConfigurationError(Exception):
+    pass
+
+
 class NetConfig(object):
     """Common network config methods class."""
 
@@ -37,6 +41,7 @@ class NetConfig(object):
         self.noop = noop
         self.log_prefix = "NOOP: " if noop else ""
         self.root_dir = root_dir
+        self.errors = []
 
     def add_object(self, obj):
         """Convenience method to add any type of object to the network config.
@@ -107,105 +112,105 @@ class NetConfig(object):
 
         :param interface: The Interface object to add.
         """
-        raise NotImplemented("add_interface is not implemented.")
+        raise NotImplementedError("add_interface is not implemented.")
 
     def add_vlan(self, vlan):
         """Add a Vlan object to the net config object.
 
         :param vlan: The vlan object to add.
         """
-        raise NotImplemented("add_vlan is not implemented.")
+        raise NotImplementedError("add_vlan is not implemented.")
 
     def add_bridge(self, bridge):
         """Add an OvsBridge object to the net config object.
 
         :param bridge: The OvsBridge object to add.
         """
-        raise NotImplemented("add_bridge is not implemented.")
+        raise NotImplementedError("add_bridge is not implemented.")
 
     def add_ovs_user_bridge(self, bridge):
         """Add an OvsUserBridge object to the net config object.
 
         :param bridge: The OvsUserBridge object to add.
         """
-        raise NotImplemented("add_ovs_user_bridge is not implemented.")
+        raise NotImplementedError("add_ovs_user_bridge is not implemented.")
 
     def add_linux_bridge(self, bridge):
         """Add a LinuxBridge object to the net config object.
 
         :param bridge: The LinuxBridge object to add.
         """
-        raise NotImplemented("add_linux_bridge is not implemented.")
+        raise NotImplementedError("add_linux_bridge is not implemented.")
 
     def add_ivs_bridge(self, bridge):
         """Add a IvsBridge object to the net config object.
 
         :param bridge: The IvsBridge object to add.
         """
-        raise NotImplemented("add_ivs_bridge is not implemented.")
+        raise NotImplementedError("add_ivs_bridge is not implemented.")
 
     def add_nfvswitch_bridge(self, bridge):
         """Add a NfvswitchBridge object to the net config object.
 
         :param bridge: The NfvswitchBridge object to add.
         """
-        raise NotImplemented("add_nfvswitch_bridge is not implemented.")
+        raise NotImplementedError("add_nfvswitch_bridge is not implemented.")
 
     def add_bond(self, bond):
         """Add an OvsBond object to the net config object.
 
         :param bond: The OvsBond object to add.
         """
-        raise NotImplemented("add_bond is not implemented.")
+        raise NotImplementedError("add_bond is not implemented.")
 
     def add_linux_bond(self, bond):
         """Add a LinuxBond object to the net config object.
 
         :param bond: The LinuxBond object to add.
         """
-        raise NotImplemented("add_linux_bond is not implemented.")
+        raise NotImplementedError("add_linux_bond is not implemented.")
 
     def add_linux_team(self, team):
         """Add a LinuxTeam object to the net config object.
 
         :param team: The LinuxTeam object to add.
         """
-        raise NotImplemented("add_linux_team is not implemented.")
+        raise NotImplementedError("add_linux_team is not implemented.")
 
     def add_ovs_tunnel(self, tunnel):
         """Add a OvsTunnel object to the net config object.
 
         :param tunnel: The OvsTunnel object to add.
         """
-        raise NotImplemented("add_ovs_tunnel is not implemented.")
+        raise NotImplementedError("add_ovs_tunnel is not implemented.")
 
     def add_ovs_patch_port(self, ovs_patch_port):
         """Add a OvsPatchPort object to the net config object.
 
         :param ovs_patch_port: The OvsPatchPort object to add.
         """
-        raise NotImplemented("add_ovs_patch_port is not implemented.")
+        raise NotImplementedError("add_ovs_patch_port is not implemented.")
 
     def add_ib_interface(self, ib_interface):
         """Add an InfiniBand Interface object to the net config object.
 
         :param interface: The InfiniBand Interface object to add.
         """
-        raise NotImplemented("add_ib_interface is not implemented.")
+        raise NotImplementedError("add_ib_interface is not implemented.")
 
     def add_ovs_dpdk_port(self, ovs_dpdk_port):
         """Add a OvsDpdkPort object to the net config object.
 
         :param ovs_dpdk_port: The OvsDpdkPort object to add.
         """
-        raise NotImplemented("add_ovs_dpdk_port is not implemented.")
+        raise NotImplementedError("add_ovs_dpdk_port is not implemented.")
 
     def add_ovs_dpdk_bond(self, ovs_dpdk_bond):
         """Add a OvsDpdkBond object to the net config object.
 
         :param ovs_dpdk_bond: The OvsDpdkBond object to add.
         """
-        raise NotImplemented("add_ovs_dpdk_bond is not implemented.")
+        raise NotImplementedError("add_ovs_dpdk_bond is not implemented.")
 
     def add_vpp_interface(self, vpp_interface):
         """Add a VppInterface object to the net config object.
@@ -231,7 +236,7 @@ class NetConfig(object):
             for each file that was changed (or would be changed if in --noop
             mode).
         """
-        raise NotImplemented("apply is not implemented.")
+        raise NotImplementedError("apply is not implemented.")
 
     def execute(self, msg, cmd, *args, **kwargs):
         """Print a message and run a command.
@@ -260,8 +265,20 @@ class NetConfig(object):
         self.execute(msg, '/sbin/ifdown', interface, check_exit_code=False)
 
     def ifup(self, interface, iftype='interface'):
+        """Run 'ifup' on the specified interface
+
+        If a failure occurs when bringing up the interface it will be saved
+        to self.errors for later handling.  This allows callers to continue
+        trying to bring up interfaces even if one fails.
+
+        :param interface: The name of the interface to be started.
+        :param iftype: The type of the interface.
+        """
         msg = 'running ifup on %s: %s' % (iftype, interface)
-        self.execute(msg, '/sbin/ifup', interface)
+        try:
+            self.execute(msg, '/sbin/ifup', interface)
+        except processutils.ProcessExecutionError as e:
+            self.errors.append(e)
 
     def ifrename(self, oldname, newname):
         msg = 'renaming %s to %s: ' % (oldname, newname)
