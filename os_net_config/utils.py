@@ -482,36 +482,39 @@ def restart_vpp(vpp_interfaces):
     for vpp_int in vpp_interfaces:
         if 'vfio-pci' in vpp_int.uio_driver:
             processutils.execute('modprobe', 'vfio-pci')
+            break
     logger.info('Restarting VPP')
     processutils.execute('systemctl', 'restart', 'vpp')
+    wait_for_vpp(retry=2, sleep=20)
 
 
-def _get_vpp_interface(pci_addr, tries=1, timeout=5):
+def _get_vpp_interface(pci_addr, retry=20, sleep=5):
     """Get VPP interface information from a given PCI address
 
-    From a running VPP instance, attempt to find the interface name and index
-    from a given PCI address of a NIC. The index is used to identify VPP bond
-    interface associated with the VPP interface.
+    From a running VPP instance, attempt to find the interface name from
+    a given PCI address of a NIC.
+
+    VppException will be raised if pci_addr is not formatted correctly.
+    ProcessExecutionError will be raised if VPP interface mapped to pci_addr
+    is not found.
 
     :param pci_addr: PCI address to lookup, in the form of DDDD:BB:SS.F, where
                      - DDDD = Domain
                      - BB = Bus Number
                      - SS = Slot number
                      - F = Function
-    :param tries: Number of tries for getting vppctl output. Defaults to 1.
-    :param timeout: Timeout in seconds between tries. Defaults to 5.
-    :return: VPP interface name. None if an interface is not found.
+    :return: VPP interface name and index. None if an interface is not found.
     """
     if not pci_addr:
         return None
 
-    for _ in range(tries):
+    wait_for_vpp()
+
+    for _ in range(retry):
         try:
-            timestamp = time.time()
-            processutils.execute('systemctl', 'is-active', 'vpp')
-            out, err = processutils.execute('vppctl', 'show', 'interface',
-                                            check_exit_code=False)
-            logger.debug("vppctl show interface\n%s\n%s\n" % (out, err))
+            # Check exit code is a workaround used due to vppctl terminating the pipe prematurely
+            out, err = processutils.execute('vppctl', 'show', 'interface', check_exit_code=[0, -13])
+            logger.debug('vppctl show interface \n %s' % out)
             m = re.search(r':([0-9a-fA-F]{2}):([0-9a-fA-F]{2}).([0-9a-fA-F])',
                           pci_addr)
             if m:
@@ -521,26 +524,24 @@ def _get_vpp_interface(pci_addr, tries=1, timeout=5):
             else:
                 raise VppException('Invalid PCI address format: %s' % pci_addr)
 
-            m = re.search(r'^(\w+%s)\s+(\d+)' % formatted_pci, out,
-                          re.MULTILINE)
+            m = re.search(r'^(\w+%s)\s+(\d+)' % formatted_pci, out, re.MULTILINE)
             if m:
-                logger.info('VPP interface found: %s, index: %s' %
-                            (m.group(1), m.group(2)))
+                logger.debug('VPP interface found: %s' % m.group(1))
                 return {'name': m.group(1), 'index': m.group(2)}
-        except processutils.ProcessExecutionError:
-            pass
+            else:
+                logger.debug('Interface with pci address %s not bound to VPP'
+                             % pci_addr)
+                return None
+        except processutils.ProcessExecutionError as e:
+            logger.debug('Caught vppctl show interface exception:\n%s' % str(e))
+            time.sleep(sleep)
 
-        time.sleep(max(0, (timestamp + timeout) - time.time()))
-    else:
-        logger.info('Interface with pci address %s not bound to vpp' %
-                    pci_addr)
-        return None
 
-
-def _get_vpp_bond(member_ids):
+def _get_vpp_bond(member_ids, retry=20, sleep=5):
     """Get VPP bond information from a given list of VPP interface indices
 
     :param member_ids: list of VPP interfaces indices for the bond
+
     :return: VPP bond name and index. None if an interface is not found.
     """
     if not member_ids:
@@ -549,21 +550,37 @@ def _get_vpp_bond(member_ids):
     member_ids.sort()
     member_ids_str = ' '.join(member_ids)
 
-    out, err = processutils.execute('vppctl', 'show',
-                                    'hardware-interfaces', 'bond', 'brief',
-                                    check_exit_code=False)
-    logger.debug('vppctl show hardware-interfaces bond brief\n%s' % out)
-    m = re.search(r'^\s*(BondEthernet\d+)\s+(\d+)\s+.+Slave-Idx:\s+%s\s*$' %
-                  member_ids_str,
-                  out,
-                  re.MULTILINE)
-    if m:
-        logger.info('Bond found: %s, index: %s' % (m.group(1), m.group(2)))
-        return {'name': m.group(1), 'index': m.group(2)}
-    else:
-        logger.info('Bond with member indices "%s" not found in VPP'
-                    % member_ids_str)
-        return None
+    wait_for_vpp()
+
+    for _ in range(retry):
+        try:
+            # Check exit code is a workaround used due to vppctl terminating the pipe prematurely
+            out, err = processutils.execute('vppctl', 'show',
+                                            'hardware-interfaces', 'bond', 'brief', check_exit_code=[0, -13])
+            logger.debug('vppctl show hardware-interfaces bond brief\n%s' % out)
+            m = re.search(r'^\s*(BondEthernet\d+)\s+(\d+)\s+.+Slave-Idx:\s+%s\s*$' %
+                          member_ids_str,
+                          out,
+                          re.MULTILINE)
+            if m:
+                logger.debug('Bond found: %s' % m.group(1))
+                return {'name': m.group(1), 'index': m.group(2)}
+            else:
+                logger.debug('Bond with member indices "%s" not found in VPP'
+                             % member_ids_str)
+                return None
+        except processutils.ProcessExecutionError as e:
+            logger.debug('Caught vppctl show hardware-interfaces interface bond exception:\n%s' % str(e))
+            time.sleep(sleep)
+
+
+def wait_for_vpp(retry=10, sleep=5):
+    for _ in range(retry):
+        try:
+            std, err = processutils.execute('systemctl', 'is-active', 'vpp')
+            return (std, err)
+        except processutils.ProcessExecutionError:
+            time.sleep(sleep)
 
 
 def generate_vpp_config(vpp_config_path, vpp_interfaces, vpp_bonds):
@@ -695,21 +712,14 @@ def update_vpp_mapping(vpp_interfaces, vpp_bonds):
     :param vpp_bonds: List of VPP bond objects
     """
     cli_list = []
-
     for vpp_int in vpp_interfaces:
         # Try to get VPP interface name. In case VPP service is down
-        # for some reason, we will restart VPP and try again. Currently
-        # only trying one more time, can turn into a retry_counter if needed
-        # in the future.
-        for i in range(2):
-            int_info = _get_vpp_interface(vpp_int.pci_dev,
-                                          tries=12, timeout=5)
-            if not int_info:
-                restart_vpp(vpp_interfaces)
-            else:
-                vpp_int.vpp_name = int_info['name']
-                vpp_int.vpp_idx = int_info['index']
-                break
+        # for some reason, we will re-attempt and force a restart once (just in case)
+        logger.debug('Trying to determine VPP interface for PCI: %s' % vpp_int.pci_dev)
+        int_info = _get_vpp_interface(vpp_int.pci_dev)
+        if int_info:
+            vpp_int.vpp_name = int_info['name']
+            vpp_int.vpp_idx = int_info['index']
         else:
             raise VppException('Interface %s with pci address %s not '
                                'bound to vpp'
@@ -732,6 +742,7 @@ def update_vpp_mapping(vpp_interfaces, vpp_bonds):
                          vpp_int.uio_driver)
 
     for vpp_bond in vpp_bonds:
+        logger.debug('Trying to determine VPP interface for bond: %s' % vpp_bond.name)
         bond_ids = [member.vpp_idx for member in vpp_bond.members]
         bond_info = _get_vpp_bond(bond_ids)
         if bond_info:
